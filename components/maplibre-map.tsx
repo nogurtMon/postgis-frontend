@@ -156,7 +156,7 @@ export default function MaplibreMap() {
         mapStyle="https://api.maptiler.com/maps/hybrid/style.json?key=GYDRZyFt8oPZKclvC77i"
       />
 
-      {/* Dialog for showing point details */}
+      {/* Dialog for showing point details bbb */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
