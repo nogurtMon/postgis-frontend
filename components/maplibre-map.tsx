@@ -19,6 +19,16 @@ export default function MaplibreMap() {
   const mapRef = React.useRef<any>(null);
   const [selectedPoint, setSelectedPoint] = React.useState<any>(null);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = React.useState(true);
+
+  // Filter states
+  const [selectedFeedstockTypes, setSelectedFeedstockTypes] = React.useState<string[]>([
+    'Landfill gas', 'Food waste', 'Raw biogas', 'Wastewater', 'Distillery stillage'
+  ]);
+  const [selectedStatuses, setSelectedStatuses] = React.useState<string[]>([
+    'New', 'Researching', 'Enhanced', 'Contacted', 'Followed up', 'Engaged'
+  ]);
+  const [energyRange, setEnergyRange] = React.useState<[number, number]>([10000, 1000000]);
 
   // Define the attribute order
   const attributeOrder = [
@@ -44,6 +54,29 @@ export default function MaplibreMap() {
     'last_updated'
   ];
 
+  // Available options for filters
+  const feedstockOptions = [
+    'Landfill gas', 'Wastewater', 'Food waste', 'Raw biogas', 'Distillery stillage',
+    'Dairy manure', 'Swine manure', 'Layer manure', 'Other manure', 'Broiler manure',
+    'Beef manure', 'Fats, oils and greases', 'Poultry wastewater', 'Dairy wastewater',
+    'Meat, poultry, egg processing waste', 'Paper mill'
+  ];
+
+  const statusOptions = [
+    'New', 'Researching', 'Enhanced', 'Contacted', 'Followed up', 'Engaged', 'Disqualified'
+  ];
+
+  // Status colors with better contrast
+  const statusColorMap: any = {
+    'New': [255, 255, 255],        // White
+    'Researching': [147, 51, 234],  // Purple (replaced gray)
+    'Enhanced': [59, 130, 246],     // Blue
+    'Contacted': [234, 179, 8],     // Yellow
+    'Followed up': [249, 115, 22],  // Orange
+    'Engaged': [34, 197, 94],       // Green
+    'Disqualified': [239, 68, 68]   // Red
+  };
+
   // 1) Stable overlay (created once)
   const overlay = React.useMemo(
     () =>
@@ -55,16 +88,6 @@ export default function MaplibreMap() {
 
   const getFillColorByStatus = (object: any) => {
     const status = object.properties?.status;
-    
-    const statusColorMap: any = {
-      'New': [255, 255, 255],        // White
-      'Engaged': [0, 255, 0],    // Green
-      'Enhanced': [0, 0, 255],   // Blue
-      'Contacted': [255, 255, 0], // Yellow
-      'Followed up': [255, 165, 0], // Orange
-      'Need to contact': [255, 0, 255], // Magenta
-    };
-    
     return statusColorMap[status] || [128, 128, 128];
   };
 
@@ -81,14 +104,12 @@ export default function MaplibreMap() {
     const ordered: [string, any][] = [];
     const remaining: [string, any][] = [];
 
-    // First, add attributes in the specified order
     attributeOrder.forEach(key => {
       if (properties.hasOwnProperty(key)) {
         ordered.push([key, properties[key]]);
       }
     });
 
-    // Then, add any remaining attributes that weren't in the order list
     Object.entries(properties).forEach(([key, value]) => {
       if (!attributeOrder.includes(key)) {
         remaining.push([key, value]);
@@ -98,7 +119,24 @@ export default function MaplibreMap() {
     return [...ordered, ...remaining];
   };
 
-  // 2) Stable layers array (ids don't change)
+  // Toggle functions for filters
+  const toggleFeedstockType = (type: string) => {
+    setSelectedFeedstockTypes(prev =>
+      prev.includes(type)
+        ? prev.filter(t => t !== type)
+        : [...prev, type]
+    );
+  };
+
+  const toggleStatus = (status: string) => {
+    setSelectedStatuses(prev =>
+      prev.includes(status)
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    );
+  };
+
+  // 2) Layers with dynamic filtering
   const layers = React.useMemo(() => {
     return [
       new MVTLayer({
@@ -119,19 +157,16 @@ export default function MaplibreMap() {
         onClick: handlePointClick,
         extensions: [new DataFilterExtension({ filterSize: 1, categorySize: 2 })],
         getFilterValue: (f: any) => parseFloat(f.properties.feedstock_mwh_per_year),
-        filterRange: [10000, 1000000],
+        filterRange: energyRange,
         getFilterCategory: (object: any) => {
           const props = object.properties;
           return [props.feedstock_type, props.status];
         },
-        filterCategories: [
-          ['Landfill gas', 'Food waste', 'Raw biogas', 'Wastewater', 'Distillery stillage', 'Dairy manure', 'Swine manure', 'Layer manure'],
-          ['Engaged', 'Enhanced', 'Contacted', 'Followed up', 'Need to contact']
-        ],
+        filterCategories: [selectedFeedstockTypes, selectedStatuses],
         filterEnabled: true
       }),
     ];
-  }, []);
+  }, [selectedFeedstockTypes, selectedStatuses, energyRange]);
 
   // 3) Attach overlay once; update props later
   const onLoad = React.useCallback(() => {
@@ -148,6 +183,111 @@ export default function MaplibreMap() {
 
   return (
     <>
+      {/* Filter Controls */}
+      <div className="absolute top-16 left-4 z-10 bg-slate-300/90 backdrop-blur-sm rounded-lg shadow-lg border max-w-md">
+        {/* Collapse Header */}
+        <div 
+          className="flex items-center justify-between p-2 hover:bg-slate-400 rounded-t-lg cursor-pointer"
+          onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+        >
+          <h3 className="font-medium">{!isFiltersOpen ? 'Open filters' : 'Close filters'}</h3>
+          <svg 
+            className={`w-5 h-5 transition-transform ${isFiltersOpen ? 'rotate-180' : ''}`}
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+
+        {/* Filter Content - Conditionally Rendered */}
+        {isFiltersOpen && (
+          <div className="p-4 space-y-4 border-t">
+            {/* Feedstock Type Filter */}
+            <div>
+              <h4 className="font-semibold mb-2">Feedstock Type</h4>
+              <div className="grid grid-cols-2 gap-1 max-h-64 overflow-y-auto">
+                {feedstockOptions.map(type => (
+                  <label key={type} className="flex items-center space-x-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedFeedstockTypes.includes(type)}
+                      onChange={() => toggleFeedstockType(type)}
+                      className="rounded border-gray-300"
+                    />
+                    <span>{type}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Status Filter */}
+            <div>
+              <h4 className="font-semibold mb-2">Status</h4>
+              <div className="grid grid-cols-2 gap-1">
+                {statusOptions.map(status => (
+                  <label key={status} className="flex items-center space-x-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedStatuses.includes(status)}
+                      onChange={() => toggleStatus(status)}
+                      className="rounded border-gray-300"
+                    />
+                    <span>{status}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Energy Range Filter */}
+            <div>
+              <h4 className="font-semibold mb-2">
+                Biomethane Potential: {energyRange[0].toLocaleString()} - {energyRange[1].toLocaleString()} MWh/year
+              </h4>
+              <div className="space-y-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={2000000}
+                  step={10000}
+                  value={energyRange[0]}
+                  onChange={(e) => setEnergyRange([parseInt(e.target.value), energyRange[1]])}
+                  className="w-full"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={2000000}
+                  step={10000}
+                  value={energyRange[1]}
+                  onChange={(e) => setEnergyRange([energyRange[0], parseInt(e.target.value)])}
+                  className="w-full"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Status Legend */}
+      <div className="absolute top-16 right-4 z-10 bg-slate-300/90 backdrop-blur-sm rounded-lg shadow-lg border p-4 max-w-xs">
+        <h3 className="font-semibold mb-3 text-center">Status Colors</h3>
+        <div className="space-y-2">
+          {statusOptions.map(status => (
+            <div key={status} className="flex items-center space-x-3">
+              <div 
+                className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0"
+                style={{
+                  backgroundColor: `rgb(${statusColorMap[status].join(',')})`
+                }}
+              />
+              <span className="text-sm">{status}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <Map
         ref={mapRef}
         onLoad={onLoad}
@@ -156,9 +296,9 @@ export default function MaplibreMap() {
         mapStyle="https://api.maptiler.com/maps/hybrid/style.json?key=GYDRZyFt8oPZKclvC77i"
       />
 
-      {/* Dialog for showing point details bbb */}
+      {/* Dialog for showing point details */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl bg-slate-300 max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Point Details</DialogTitle>
             <DialogDescription>
