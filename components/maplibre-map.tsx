@@ -222,19 +222,27 @@ export default function MaplibreMap() {
               </div>
             </div>
 
-            {/* Status Filter */}
+            {/* Status Filter with Colors */}
             <div>
               <h4 className="font-semibold mb-2">Status</h4>
               <div className="grid grid-cols-2 gap-1">
                 {statusOptions.map(status => (
-                  <label key={status} className="flex items-center space-x-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedStatuses.includes(status)}
-                      onChange={() => toggleStatus(status)}
-                      className="rounded border-gray-300"
+                  <label key={status} className="flex items-center justify-left gap-1.5 text-sm group">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedStatuses.includes(status)}
+                        onChange={() => toggleStatus(status)}
+                        className="rounded border-gray-300"
+                      />
+                      <span>{status}</span>
+                    </div>
+                    <div 
+                      className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0 transition-opacity group-hover:opacity-80"
+                      style={{
+                        backgroundColor: `rgb(${statusColorMap[status].join(',')})`
+                      }}
                     />
-                    <span>{status}</span>
                   </label>
                 ))}
               </div>
@@ -268,24 +276,6 @@ export default function MaplibreMap() {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Status Legend */}
-      <div className="absolute top-16 right-4 z-10 bg-slate-300/90 backdrop-blur-sm rounded-lg shadow-lg border p-4 max-w-xs">
-        <h3 className="font-semibold mb-3 text-center">Status Colors</h3>
-        <div className="space-y-2">
-          {statusOptions.map(status => (
-            <div key={status} className="flex items-center space-x-3">
-              <div 
-                className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0"
-                style={{
-                  backgroundColor: `rgb(${statusColorMap[status].join(',')})`
-                }}
-              />
-              <span className="text-sm">{status}</span>
-            </div>
-          ))}
-        </div>
       </div>
 
       <Map
