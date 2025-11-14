@@ -23,12 +23,12 @@ export default function MaplibreMap() {
 
   // Filter states
   const [selectedFeedstockTypes, setSelectedFeedstockTypes] = React.useState<string[]>([
-    'Landfill gas', 'Food waste', 'Raw biogas', 'Wastewater', 'Distillery stillage'
+    'Landfill gas'
   ]);
   const [selectedStatuses, setSelectedStatuses] = React.useState<string[]>([
     'New', 'Researching', 'Enhanced', 'Contacted', 'Followed up', 'Engaged'
   ]);
-  const [energyRange, setEnergyRange] = React.useState<[number, number]>([10000, 1000000]);
+  const [energyRange, setEnergyRange] = React.useState<[number, number]>([70000, 2000000]);
 
   // Define the attribute order
   const attributeOrder = [
