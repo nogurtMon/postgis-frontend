@@ -12,16 +12,34 @@ export async function POST(req: NextRequest) {
   const { dsn } = await req.json();
   if (!dsn?.startsWith("postgres")) return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
   const pool = getPool(dsn);
+  // Query pg_catalog directly — more reliable than information_schema for PostGIS types.
+  // Returns only tables that have at least one geometry/geography column.
   const sql = `
-    SELECT t.table_schema, t.table_name,
-           gc.f_geometry_column AS geom_col, gc.type AS geom_type, gc.srid
-    FROM information_schema.tables t
+    SELECT DISTINCT ON (n.nspname, cls.relname)
+           n.nspname                      AS table_schema,
+           cls.relname                    AS table_name,
+           a.attname                      AS geom_col,
+           COALESCE(gc.type, upper(t.typname)) AS geom_type,
+           COALESCE(gc.srid, 4326)        AS srid
+    FROM   pg_class cls
+    JOIN   pg_namespace n   ON n.oid = cls.relnamespace
+    JOIN   pg_attribute a   ON a.attrelid = cls.oid
+                           AND a.attnum > 0
+                           AND NOT a.attisdropped
+    JOIN   pg_type t        ON t.oid = a.atttypid
+                           AND t.typname IN ('geometry','geography')
     LEFT JOIN public.geometry_columns gc
-      ON gc.f_table_schema=t.table_schema AND gc.f_table_name=t.table_name
-    WHERE t.table_type='BASE TABLE'
-      AND t.table_schema NOT IN ('pg_catalog','information_schema')
-    ORDER BY t.table_schema, t.table_name;
+           ON  gc.f_table_schema    = n.nspname
+           AND gc.f_table_name      = cls.relname
+           AND gc.f_geometry_column = a.attname
+    WHERE  cls.relkind = 'r'
+      AND  n.nspname NOT IN ('pg_catalog','information_schema','topology','tiger')
+    ORDER  BY n.nspname, cls.relname, a.attname;
   `;
-  const { rows } = await pool.query(sql);
-  return NextResponse.json({ tables: rows });
+  try {
+    const { rows } = await pool.query(sql);
+    return NextResponse.json({ tables: rows });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
 }
