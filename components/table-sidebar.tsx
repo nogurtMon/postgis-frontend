@@ -296,7 +296,11 @@ export function TableSidebar({
   const [expandedLayer, setExpandedLayer] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (!dsn) return;
+    if (!dsn) {
+      setTables([]);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     fetch("/api/pg/tables", {

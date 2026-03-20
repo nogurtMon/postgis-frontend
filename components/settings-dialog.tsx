@@ -12,9 +12,10 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   dsn: string;
   onSave: (dsn: string) => void;
+  onDisconnect: () => void;
 }
 
-export function SettingsDialog({ open, onOpenChange, dsn, onSave }: Props) {
+export function SettingsDialog({ open, onOpenChange, dsn, onSave, onDisconnect }: Props) {
   const [draft, setDraft] = React.useState(dsn);
 
   React.useEffect(() => {
@@ -26,6 +27,11 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave }: Props) {
     onOpenChange(false);
   }
 
+  function handleDisconnect() {
+    onDisconnect();
+    onOpenChange(false);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
@@ -33,8 +39,7 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave }: Props) {
           <DialogTitle>Connection Settings</DialogTitle>
           <DialogDescription>
             Enter your PostgreSQL / PostGIS connection string. Stored only in
-            your browser&apos;s local storage. A Martin tile server will be
-            started automatically.
+            your browser&apos;s local storage.
           </DialogDescription>
         </DialogHeader>
 
@@ -50,11 +55,18 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave }: Props) {
             />
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={!draft.trim().startsWith("postgres")}>
-              Save &amp; Connect
-            </Button>
+          <div className="flex justify-between gap-2">
+            {dsn && (
+              <Button variant="destructive" onClick={handleDisconnect}>
+                Disconnect
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button onClick={handleSave} disabled={!draft.trim().startsWith("postgres")}>
+                Save &amp; Connect
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

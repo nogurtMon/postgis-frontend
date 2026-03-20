@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
-import MaplibreMap from "../components/maplibre-map";
+import dynamic from "next/dynamic";
+const MaplibreMap = dynamic(() => import("../components/maplibre-map"), { ssr: false });
 import { SettingsDialog } from "../components/settings-dialog";
 import { TableSidebar } from "../components/table-sidebar";
 import { useDsn } from "../hooks/use-dsn";
@@ -11,9 +12,14 @@ import { Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 
 export default function Home() {
-  const { dsn, setDsn } = useDsn();
+  const { dsn, setDsn, loaded } = useDsn();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
+
+  // Auto-open settings on first load if no database is configured
+  React.useEffect(() => {
+    if (loaded && !dsn) setSettingsOpen(true);
+  }, [loaded]);
 
   // Clear layers when DSN changes
   React.useEffect(() => { setLayers([]); }, [dsn]);
@@ -99,6 +105,7 @@ export default function Home() {
         onOpenChange={setSettingsOpen}
         dsn={dsn}
         onSave={setDsn}
+        onDisconnect={() => setDsn("")}
       />
     </div>
   );

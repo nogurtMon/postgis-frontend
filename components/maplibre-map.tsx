@@ -33,10 +33,34 @@ function buildTileUrl(layer: MapLayer): string {
   return `/api/pg/tiles/{z}/{x}/{y}?${params.toString()}`;
 }
 
+const SATELLITE_STYLE = {
+  version: 8 as const,
+  sources: {
+    "esri-satellite": {
+      type: "raster" as const,
+      tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "Esri, Maxar, Earthstar Geographics",
+    },
+  },
+  layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri-satellite" }],
+};
+
+const BASEMAPS: Record<string, { label: string; style: string | typeof SATELLITE_STYLE }> = {
+  liberty:   { label: "Liberty",   style: "https://tiles.openfreemap.org/styles/liberty" },
+  bright:    { label: "Bright",    style: "https://tiles.openfreemap.org/styles/bright" },
+  positron:  { label: "Positron",  style: "https://tiles.openfreemap.org/styles/positron" },
+  satellite: { label: "Satellite", style: SATELLITE_STYLE },
+};
+
+type BasemapKey = keyof typeof BASEMAPS;
+
 export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
   const mapRef = React.useRef<any>(null);
   const [selectedPoint, setSelectedPoint] = React.useState<any>(null);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [basemap, setBasemap] = React.useState<BasemapKey>("liberty");
+  const [showBasemapPicker, setShowBasemapPicker] = React.useState(false);
 
   const overlay = React.useMemo(() => new MapboxOverlay({ interleaved: false }), []);
 
@@ -113,8 +137,32 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
         onLoad={onLoad}
         initialViewState={{ longitude: -98.5556199, latitude: 39.8097343, zoom: 4 }}
         style={{ width: "100%", height: "100%" }}
-        mapStyle="https://api.maptiler.com/maps/hybrid/style.json?key=GYDRZyFt8oPZKclvC77i"
+        mapStyle={BASEMAPS[basemap].style as any}
       />
+
+      <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+        {showBasemapPicker && (
+          <div className="flex flex-col rounded-md border bg-background/95 shadow-sm backdrop-blur-sm overflow-hidden mb-1">
+            {Object.entries(BASEMAPS).map(([key, { label }]) => (
+              <button
+                key={key}
+                onClick={() => { setBasemap(key); setShowBasemapPicker(false); }}
+                className={`px-3 py-1.5 text-xs text-left transition-colors hover:bg-muted ${
+                  basemap === key ? "font-semibold text-primary" : "text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          onClick={() => setShowBasemapPicker((v) => !v)}
+          className="rounded-md border bg-background/90 px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm hover:bg-background transition-colors"
+        >
+          {BASEMAPS[basemap].label}
+        </button>
+      </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-lg">
