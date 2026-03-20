@@ -17,7 +17,6 @@ import {
 
 interface Props {
   dsn: string;
-  martinCatalog: Record<string, string>;
   layers: MapLayer[];
   onAddLayer: (table: TableRow) => void;
   onRemoveLayer: (id: string) => void;
@@ -286,7 +285,7 @@ function LayerFilterEditor({
 }
 
 export function TableSidebar({
-  dsn, martinCatalog, layers,
+  dsn, layers,
   onAddLayer, onRemoveLayer, onUpdateLayer, onMoveLayer,
 }: Props) {
   const [tab, setTab] = React.useState("tables");

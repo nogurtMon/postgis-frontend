@@ -16,11 +16,6 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 function buildTileUrl(layer: MapLayer): string {
-  const hasFilters = layer.filters.some((f) => f.column.trim());
-  if (!hasFilters && layer.martinSourceId) {
-    return `/api/tiles/${layer.martinSourceId}/{z}/{x}/{y}`;
-  }
-  // Custom tile route with filters
   const params = new URLSearchParams({
     dsn: layer.dsn,
     schema: layer.table.table_schema,

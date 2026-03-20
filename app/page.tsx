@@ -10,48 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 
-type MartinStatus = "idle" | "starting" | "running" | "error" | "unavailable";
-type MartinCatalog = Record<string, string>; // "schema.table" -> source ID
-
-async function startMartin(dsn: string): Promise<MartinStatus> {
-  const res = await fetch("/api/martin", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "start", dsn }),
-  });
-  if (!res.ok) return "error";
-  const data = await res.json();
-  if (data.status === "not_available") return "unavailable";
-  return "running";
-}
-
-async function fetchCatalog(): Promise<MartinCatalog> {
-  const res = await fetch("/api/martin/catalog");
-  const data = await res.json();
-  const catalog: MartinCatalog = {};
-  for (const [sourceId, info] of Object.entries(data.tiles ?? {}) as [string, any][]) {
-    const desc: string = info.description ?? "";
-    const parts = desc.split(".");
-    if (parts.length >= 2) catalog[`${parts[0]}.${parts[1]}`] = sourceId;
-  }
-  return catalog;
-}
-
 export default function Home() {
   const { dsn, setDsn } = useDsn();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [martinStatus, setMartinStatus] = React.useState<MartinStatus>("idle");
-  const [martinCatalog, setMartinCatalog] = React.useState<MartinCatalog>({});
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
-
-  React.useEffect(() => {
-    if (!dsn) return;
-    setMartinStatus("starting");
-    startMartin(dsn).then((status) => {
-      setMartinStatus(status);
-      if (status === "running") fetchCatalog().then(setMartinCatalog);
-    });
-  }, [dsn]);
 
   // Clear layers when DSN changes
   React.useEffect(() => { setLayers([]); }, [dsn]);
@@ -59,14 +21,12 @@ export default function Home() {
   function addLayer(table: TableRow) {
     const key = `${table.table_schema}.${table.table_name}`;
     if (layers.some((l) => `${l.table.table_schema}.${l.table.table_name}` === key)) return;
-    const martinSourceId = martinCatalog[key] ?? null;
     const color = LAYER_COLORS[layers.length % LAYER_COLORS.length];
     setLayers((prev) => [
       ...prev,
       {
         id: crypto.randomUUID(),
         table,
-        martinSourceId,
         dsn,
         visible: true,
         style: { ...DEFAULT_STYLE, color },
@@ -95,22 +55,13 @@ export default function Home() {
     });
   }
 
-  const statusDot: Record<MartinStatus, { color: string; label: string }> = {
-    idle:        { color: "bg-slate-400",                label: "Not connected" },
-    starting:    { color: "bg-yellow-400 animate-pulse", label: "Starting Martin…" },
-    running:     { color: "bg-green-500",                label: "Martin running" },
-    error:       { color: "bg-red-500",                  label: "Martin error" },
-    unavailable: { color: "bg-slate-400",                label: "Direct tile mode" },
-  };
-  const dot = statusDot[martinStatus];
-
   return (
     <div className="font-sans h-screen overflow-hidden grid grid-rows-[auto_1fr]">
       <header className="bg-background shadow-sm px-4 py-2 border-b">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2 w-40">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dot.color}`} />
-            <span className="text-xs text-muted-foreground">{dot.label}</span>
+            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-slate-400"}`} />
+            <span className="text-xs text-muted-foreground">{dsn ? "Connected" : "Not connected"}</span>
           </div>
 
           <h1 className="text-lg font-semibold tracking-tight">PostGIS Frontend</h1>
@@ -132,7 +83,6 @@ export default function Home() {
       <div className="flex overflow-hidden">
         <TableSidebar
           dsn={dsn}
-          martinCatalog={martinCatalog}
           layers={layers}
           onAddLayer={addLayer}
           onRemoveLayer={removeLayer}

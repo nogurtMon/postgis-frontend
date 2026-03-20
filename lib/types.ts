@@ -37,7 +37,6 @@ export interface LayerStyle {
 export interface MapLayer {
   id: string;
   table: TableRow;
-  martinSourceId: string | null;
   dsn: string;
   visible: boolean;
   style: LayerStyle;
