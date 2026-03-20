@@ -106,7 +106,7 @@ export async function GET(
 
     const { rows } = await pool.query(sql, queryParams);
     const mvt: Buffer = rows[0].mvt;
-    return new NextResponse(mvt, {
+    return new NextResponse(new Uint8Array(mvt), {
       headers: { "Content-Type": "application/vnd.mapbox-vector-tile" },
     });
   } catch (e: any) {
