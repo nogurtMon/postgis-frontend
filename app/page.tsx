@@ -1,112 +1,169 @@
-"use client";
-import React from "react";
-import dynamic from "next/dynamic";
-const MaplibreMap = dynamic(() => import("../components/maplibre-map"), { ssr: false });
-import { SettingsDialog } from "../components/settings-dialog";
-import { TableSidebar } from "../components/table-sidebar";
-import { useDsn } from "../hooks/use-dsn";
-import { LAYER_COLORS, DEFAULT_STYLE } from "../lib/types";
-import type { TableRow, MapLayer } from "../lib/types";
-import { Button } from "@/components/ui/button";
-import { Settings } from "lucide-react";
+import Link from "next/link";
+import Image from "next/image";
 import { ModeToggle } from "@/components/mode-toggle";
+import { Button } from "@/components/ui/button";
 
-export default function Home() {
-  const { dsn, setDsn, loaded } = useDsn();
-  const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [layers, setLayers] = React.useState<MapLayer[]>([]);
+const features = [
+  {
+    title: "Browse your spatial tables",
+    description: "Every geometry and geography column in your database is discovered automatically and grouped by schema. One click adds it to the map.",
+  },
+  {
+    title: "Style by geometry type",
+    description: "Points, lines, and polygons each get relevant controls. Scale point radius by any numeric column for instant choropleth-style visualization.",
+  },
+  {
+    title: "Filter without writing SQL",
+    description: "Apply column filters directly from the layer panel using standard operators — equals, greater than, LIKE, IS NULL, and more.",
+  },
+  {
+    title: "No infrastructure required",
+    description: "Tiles are generated on-demand from your database using PostGIS's native ST_AsMVT. No tile server, no cache, no extra services to run.",
+  },
+  {
+    title: "Multiple basemaps",
+    description: "Switch between Liberty, Bright, Positron, and satellite imagery. All free, no API keys required.",
+  },
+  {
+    title: "Inspect any feature",
+    description: "Click a feature on the map to view all of its properties in a clean panel.",
+  },
+];
 
-  // Auto-open settings on first load if no database is configured
-  React.useEffect(() => {
-    if (loaded && !dsn) setSettingsOpen(true);
-  }, [loaded]);
+const faqs = [
+  {
+    q: "Is it safe to enter my database connection string?",
+    a: "Your connection string is stored only in your browser's localStorage — it never leaves your device except to reach your own database. When you load a layer, your browser sends the DSN to the Next.js API route, which opens a connection to your database, fetches the tile, and immediately discards the DSN. Nothing is logged or persisted server-side. You can verify this by reading the source code.",
+  },
+  {
+    q: "Should I use my admin credentials?",
+    a: "No. We recommend creating a dedicated read-only PostgreSQL user with access only to the schemas you want to explore. This limits exposure even in the unlikely event something goes wrong.",
+  },
+  {
+    q: "Does this work with cloud databases like Neon, Supabase, or RDS?",
+    a: "Yes — any PostgreSQL database with the PostGIS extension enabled works. Just make sure your database accepts connections from Vercel's IP ranges (or wherever you're hosting the app).",
+  },
+  {
+    q: "What PostGIS version do I need?",
+    a: "PostGIS 2.4 or later. ST_AsMVT (used for tile generation) has been stable since PostGIS 2.4 and is available in all major managed PostgreSQL providers.",
+  },
+  {
+    q: "Is there a row limit?",
+    a: "No hard limit is enforced — tiles are clipped and simplified by PostGIS for the current viewport, so large tables remain usable at low zoom levels. Performance depends on your database hardware and whether your geometry column is indexed.",
+  },
+];
 
-  // Clear layers when DSN changes
-  React.useEffect(() => { setLayers([]); }, [dsn]);
-
-  function addLayer(table: TableRow) {
-    const key = `${table.table_schema}.${table.table_name}`;
-    if (layers.some((l) => `${l.table.table_schema}.${l.table.table_name}` === key)) return;
-    const color = LAYER_COLORS[layers.length % LAYER_COLORS.length];
-    setLayers((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        table,
-        dsn,
-        visible: true,
-        style: { ...DEFAULT_STYLE, color },
-        filters: [],
-      },
-    ]);
-  }
-
-  function removeLayer(id: string) {
-    setLayers((prev) => prev.filter((l) => l.id !== id));
-  }
-
-  function updateLayer(id: string, patch: Partial<MapLayer>) {
-    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  }
-
-  function moveLayer(id: string, dir: "up" | "down") {
-    setLayers((prev) => {
-      const i = prev.findIndex((l) => l.id === id);
-      if (i < 0) return prev;
-      const next = [...prev];
-      const swapIdx = dir === "up" ? i + 1 : i - 1;
-      if (swapIdx < 0 || swapIdx >= next.length) return prev;
-      [next[i], next[swapIdx]] = [next[swapIdx], next[i]];
-      return next;
-    });
-  }
-
+export default function LandingPage() {
   return (
-    <div className="font-sans h-screen overflow-hidden grid grid-rows-[auto_1fr]">
-      <header className="bg-background shadow-sm px-4 py-2 border-b">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2 w-40">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-slate-400"}`} />
-            <span className="text-xs text-muted-foreground">{dsn ? "Connected" : "Not connected"}</span>
-          </div>
-
-          <h1 className="text-lg font-semibold tracking-tight">PostGIS Frontend</h1>
-
-          <div className="flex justify-end w-40">
+    <div className="min-h-screen font-sans">
+      {/* Nav */}
+      <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur-sm">
+        <div className="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
+          <span className="font-semibold tracking-tight">PostGIS Frontend</span>
+          <div className="flex items-center gap-2">
             <ModeToggle />
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => setSettingsOpen(true)}
-              title="Connection settings"
-            >
-              <Settings className="h-5 w-5" />
+            <Button asChild size="sm">
+              <Link href="/map">Launch App</Link>
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex overflow-hidden">
-        <TableSidebar
-          dsn={dsn}
-          layers={layers}
-          onAddLayer={addLayer}
-          onRemoveLayer={removeLayer}
-          onUpdateLayer={updateLayer}
-          onMoveLayer={moveLayer}
+      {/* Hero */}
+      <section className="mx-auto max-w-5xl px-6 py-24 text-center">
+        <Image
+          src="/postgres-frontend-logo1.png"
+          loading="eager"
+          alt="PostGIS Frontend"
+          width={256}
+          height={256}
+          className="mx-auto mb-8 rounded-xl"
         />
-        <div className="flex-1 relative">
-          <MaplibreMap layers={layers} />
+        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          A Frontend for Your PostGIS Database
+        </h1>
+        <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
+          Connect to any PostgreSQL + PostGIS database, browse your spatial tables, and visualize them on an interactive map — no account required.
+        </p>
+        <div className="mt-8 flex items-center justify-center gap-3">
+          <Button asChild size="lg">
+            <Link href="/map">Launch App</Link>
+          </Button>
+          <Button asChild size="lg" variant="outline">
+            <a href="https://github.com/nogurtMon/postgis-frontend" target="_blank" rel="noopener noreferrer">
+              View on GitHub
+            </a>
+          </Button>
         </div>
-      </div>
+      </section>
 
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        dsn={dsn}
-        onSave={setDsn}
-        onDisconnect={() => setDsn("")}
-      />
+      {/* How it works */}
+      <section className="mx-auto max-w-5xl px-6 py-20">
+        <h2 className="text-2xl font-bold tracking-tight text-center mb-12">How it works</h2>
+        <div className="grid sm:grid-cols-3 gap-8 text-center">
+          {[
+            { step: "1", title: "Connect", body: "Paste your PostgreSQL connection string. It stays in your browser — nothing is stored on any server." },
+            { step: "2", title: "Browse", body: "Your spatial tables are discovered automatically. Click any table to add it to the map as a layer." },
+            { step: "3", title: "Explore", body: "Style layers, apply filters, scale points by data values, and click features to inspect their properties." },
+          ].map(({ step, title, body }) => (
+            <div key={step} className="flex flex-col items-center">
+              <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm mb-4">
+                {step}
+              </div>
+              <h3 className="font-semibold mb-2">{title}</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="border-t bg-muted/30">
+        <div className="mx-auto max-w-5xl px-6 py-20">
+          <h2 className="text-2xl font-bold tracking-tight text-center mb-12">Everything you need to explore spatial data</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
+            {features.map((f) => (
+              <div key={f.title}>
+                <h3 className="font-semibold mb-2">{f.title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{f.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="border-t bg-muted/30">
+        <div className="mx-auto max-w-3xl px-6 py-20">
+          <h2 className="text-2xl font-bold tracking-tight text-center mb-12">Frequently asked questions</h2>
+          <div className="space-y-8">
+            {faqs.map(({ q, a }) => (
+              <div key={q}>
+                <h3 className="font-semibold mb-2">{q}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="mx-auto max-w-5xl px-6 py-20 text-center">
+        <h2 className="text-2xl font-bold tracking-tight mb-4">Ready to explore your data?</h2>
+        <p className="text-muted-foreground mb-8">No account needed. Just a PostGIS connection string.</p>
+        <Button asChild size="lg">
+          <Link href="/map">Launch App</Link>
+        </Button>
+      </section>
+
+      <footer className="border-t">
+        <div className="mx-auto max-w-5xl px-6 py-6 flex items-center justify-between text-xs text-muted-foreground">
+          <span>PostGIS Frontend</span>
+          <a href="https://github.com/nogurtMon/postgis-frontend" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+            GitHub
+          </a>
+        </div>
+      </footer>
     </div>
   );
 }
