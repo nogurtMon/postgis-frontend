@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PostGIS Frontend
+
+A web-based map viewer for PostGIS databases. Connect to any PostgreSQL/PostGIS database, browse spatial tables, and visualize them on an interactive map — no local setup required.
+
+## Features
+
+- **Connect to any PostGIS database** via a connection string (DSN)
+- **Browse spatial tables** grouped by schema — only tables with geometry columns are shown
+- **Add layers to the map** with a single click
+- **Style layers** per geometry type:
+  - *Points* — fill color, opacity, radius, outline color, stroke width
+  - *Lines* — line color, opacity, line width
+  - *Polygons* — fill color, opacity, outline color, stroke width
+- **Data-driven radius** for point layers — scale point size by any numeric column, with configurable domain and radius range
+- **Filter layers** with SQL-style conditions (`=`, `!=`, `>`, `<`, `LIKE`, `IS NULL`, etc.)
+- **Reorder and toggle** layer visibility
+- **Click any feature** to inspect its properties
+- **Dark/light mode** toggle
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- A PostgreSQL database with the [PostGIS](https://postgis.net/) extension enabled
+
+### Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000), click the settings icon, and enter your database connection string:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+postgresql://user:password@host:5432/dbname
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Deploy to Vercel
 
-## Learn More
+The app is fully serverless-compatible. Tiles are served directly from PostGIS via Next.js API routes — no additional infrastructure needed.
 
-To learn more about Next.js, take a look at the following resources:
+## How It Works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Spatial tables are discovered by querying `pg_catalog` for geometry/geography columns. Tiles are generated on-demand using PostGIS's `ST_AsMVT` / `ST_AsMVTGeom` functions and rendered on the client with [deck.gl](https://deck.gl) (MVTLayer) on top of a [MapLibre GL](https://maplibre.org/) base map.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+Browser (MapLibre + deck.gl)
+        ↕  MVT tiles
+Next.js API (/api/pg/tiles)
+        ↕  ST_AsMVT queries
+  PostgreSQL + PostGIS
+```
 
-## Deploy on Vercel
+## Tech Stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Layer | Library |
+|---|---|
+| Framework | Next.js 15 (App Router) |
+| Map | MapLibre GL + react-map-gl |
+| Tile rendering | deck.gl MVTLayer |
+| Database client | node-postgres (pg) |
+| UI | shadcn/ui + Tailwind CSS |
+| Theming | next-themes |
