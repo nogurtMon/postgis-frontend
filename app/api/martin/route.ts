@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
+import fs from "fs";
 
 // Bundled martin binary, falls back to PATH if not found locally
 const MARTIN_BIN = path.join(process.cwd(), "martin");
@@ -44,6 +45,10 @@ export async function POST(req: NextRequest) {
   if (action === "start") {
     if (!dsn?.startsWith("postgres"))
       return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+
+    if (!fs.existsSync(MARTIN_BIN)) {
+      return NextResponse.json({ status: "not_available" });
+    }
 
     killMartin();
     // Give the OS a moment to release the port after fuser -k

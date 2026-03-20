@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 
-type MartinStatus = "idle" | "starting" | "running" | "error";
+type MartinStatus = "idle" | "starting" | "running" | "error" | "unavailable";
 type MartinCatalog = Record<string, string>; // "schema.table" -> source ID
 
 async function startMartin(dsn: string): Promise<MartinStatus> {
@@ -19,7 +19,10 @@ async function startMartin(dsn: string): Promise<MartinStatus> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "start", dsn }),
   });
-  return res.ok ? "running" : "error";
+  if (!res.ok) return "error";
+  const data = await res.json();
+  if (data.status === "not_available") return "unavailable";
+  return "running";
 }
 
 async function fetchCatalog(): Promise<MartinCatalog> {
@@ -93,10 +96,11 @@ export default function Home() {
   }
 
   const statusDot: Record<MartinStatus, { color: string; label: string }> = {
-    idle:     { color: "bg-slate-400",                label: "Not connected" },
-    starting: { color: "bg-yellow-400 animate-pulse", label: "Starting Martin…" },
-    running:  { color: "bg-green-500",                label: "Martin running" },
-    error:    { color: "bg-red-500",                  label: "Martin error" },
+    idle:        { color: "bg-slate-400",                label: "Not connected" },
+    starting:    { color: "bg-yellow-400 animate-pulse", label: "Starting Martin…" },
+    running:     { color: "bg-green-500",                label: "Martin running" },
+    error:       { color: "bg-red-500",                  label: "Martin error" },
+    unavailable: { color: "bg-slate-400",                label: "Direct tile mode" },
   };
   const dot = statusDot[martinStatus];
 
