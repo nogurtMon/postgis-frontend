@@ -12,11 +12,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only HTTPS URLs allowed" }, { status: 400 });
 
   try {
-    const res = await fetch(url, {
+    const upstream = await fetch(url, {
       headers: { "Accept": "application/json, application/geo+json" },
     });
-    const data = await res.json();
-    return NextResponse.json(data);
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+    // Stream the body directly — avoids buffering large GeoJSON in the serverless function
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: { "Content-Type": contentType },
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? "Proxy fetch failed" }, { status: 502 });
   }

@@ -51,6 +51,11 @@ async function arcFetch(url: string): Promise<any> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   });
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("json")) {
+    const preview = (await res.text()).slice(0, 300);
+    throw new Error(`Proxy returned a non-JSON response (HTTP ${res.status}). The response may be too large or the service requires authentication.\n\nPreview: ${preview}`);
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Proxy error");
   return data;
@@ -365,7 +370,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
     setArcProgress({ done: 0, total: allIds.length });
 
-    const batchSize = Math.min(arcMeta.maxRecordCount, 500);
+    const batchSize = Math.min(arcMeta.maxRecordCount, 100);
     for (let i = 0; i < allIds.length; i += batchSize) {
       if (abortRef.current) { setArcError("Import cancelled."); setArcPhase("error"); return; }
 
