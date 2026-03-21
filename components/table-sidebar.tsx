@@ -458,7 +458,7 @@ export function TableSidebar({
                     <div key={key} className="border-b">
                       <div className="flex items-center px-3 py-1.5 gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="max-w-48 text-sm truncate">{t.table_name}</p>
+                          <p className="max-w-44 text-sm truncate">{t.table_name}</p>
                           <div className="flex flex-row gap-2 items-center">
                             <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
                             {t.row_count != null && (

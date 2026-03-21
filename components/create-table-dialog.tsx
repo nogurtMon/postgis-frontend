@@ -154,6 +154,31 @@ interface GpkgLayer {
   count: number;
 }
 
+interface GpkgColMapping {
+  origName: string;
+  pgName: string;
+  type: "text" | "numeric";
+  include: boolean;
+}
+
+function buildColMappings(db: any, layer: GpkgLayer): GpkgColMapping[] {
+  const colInfoRows = db.exec(`PRAGMA table_info("${layer.tableName}")`);
+  const SKIP = new Set([layer.geomColumn.toLowerCase(), "fid"]);
+  return ((colInfoRows[0]?.values ?? []) as any[][])
+    .filter((r) => !SKIP.has(String(r[1]).toLowerCase()))
+    .map((r) => {
+      const origName = String(r[1]);
+      const sqlType = String(r[2]).toLowerCase();
+      const isNumeric = ["int", "real", "float", "double", "num"].some((t) => sqlType.includes(t));
+      let pgName = sanitizeFieldName(origName);
+      // f_id is the reserved-name escape for source columns named "id" — rename to source_id for clarity
+      if (pgName === "f_id") pgName = "source_id";
+      return { origName, pgName, type: isNumeric ? "numeric" : "text", include: true };
+    });
+}
+
+const VALID_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 type GpkgPhase = "idle" | "parsing" | "ready" | "importing" | "done" | "error";
 
 interface UserColumn {
@@ -186,6 +211,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
   const [gpkgPhase, setGpkgPhase] = React.useState<GpkgPhase>("idle");
   const [gpkgLayers, setGpkgLayers] = React.useState<GpkgLayer[]>([]);
   const [gpkgSelectedLayer, setGpkgSelectedLayer] = React.useState<GpkgLayer | null>(null);
+  const [gpkgColMappings, setGpkgColMappings] = React.useState<GpkgColMapping[]>([]);
   const [gpkgSchema, setGpkgSchema] = React.useState("public");
   const [gpkgTable, setGpkgTable] = React.useState("");
   const [gpkgProgress, setGpkgProgress] = React.useState({ done: 0, total: 0 });
@@ -221,6 +247,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
     setGpkgPhase("idle");
     setGpkgLayers([]);
     setGpkgSelectedLayer(null);
+    setGpkgColMappings([]);
     setGpkgSchema("public");
     setGpkgTable("");
     setGpkgProgress({ done: 0, total: 0 });
@@ -433,6 +460,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
       setGpkgLayers(layers);
       const first = layers[0];
       setGpkgSelectedLayer(first);
+      setGpkgColMappings(buildColMappings(db, first));
       setGpkgTable(suggestTableName(first.tableName));
       setGpkgSchema("public");
       setGpkgPhase("ready");
@@ -450,20 +478,9 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
     setGpkgPhase("importing");
     setGpkgProgress({ done: 0, total: layer.count });
 
-    // Discover non-geometry columns
-    const colInfoRows = db.exec(`PRAGMA table_info("${layer.tableName}")`);
-    const allCols: { name: string; type: string }[] = (colInfoRows[0]?.values ?? []).map((r: any[]) => ({
-      name: String(r[1]),
-      type: String(r[2]).toLowerCase(),
-    }));
-
-    const SKIP_COLS = new Set([layer.geomColumn.toLowerCase(), "fid"]);
-    const attrCols = allCols.filter((c) => !SKIP_COLS.has(c.name.toLowerCase()));
-
-    const pgCols = attrCols.map((c) => ({
-      name: sanitizeFieldName(c.name),
-      type: (c.type.includes("int") || c.type.includes("real") || c.type.includes("float") || c.type.includes("double") || c.type.includes("num")) ? "numeric" as const : "text" as const,
-    }));
+    // Use the user-configured column mappings (included columns only)
+    const includedCols = gpkgColMappings.filter((c) => c.include);
+    const pgCols = includedCols.map((c) => ({ name: c.pgName, type: c.type }));
 
     // Create PostGIS table
     const gpkgGeomType = layer.geomType || "Geometry";
@@ -489,7 +506,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
     // Read features in batches and insert
     const batchSize = 500;
-    const colSql = [layer.geomColumn, ...attrCols.map((c) => c.name)]
+    const colSql = [layer.geomColumn, ...includedCols.map((c) => c.origName)]
       .map((c) => `"${c}"`).join(", ");
 
     let offset = 0;
@@ -510,8 +527,8 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
         if (!geoJson) return [];
 
         const attrs: Record<string, any> = {};
-        attrCols.forEach((col, i) => {
-          attrs[pgCols[i].name] = row[i + 1] == null ? null : String(row[i + 1]);
+        includedCols.forEach((col, i) => {
+          attrs[col.pgName] = row[i + 1] == null ? null : String(row[i + 1]);
         });
         return [{ geomJson: JSON.stringify(geoJson), attrs }];
       });
@@ -849,7 +866,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
                     onValueChange={(v) => {
                       const l = gpkgLayers.find((x) => x.tableName === v) ?? null;
                       setGpkgSelectedLayer(l);
-                      if (l) setGpkgTable(suggestTableName(l.tableName));
+                      if (l) {
+                        setGpkgTable(suggestTableName(l.tableName));
+                        setGpkgColMappings(buildColMappings(gpkgDbRef.current, l));
+                      }
                     }}
                     disabled={gpkgPhase !== "ready"}
                   >
@@ -903,6 +923,64 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
                 </div>
               )}
 
+              {/* Column mapping */}
+              {gpkgPhase === "ready" && gpkgColMappings.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">
+                    A new <span className="font-mono">id SERIAL PRIMARY KEY</span> is auto-generated. Any source ID column is mapped to <span className="font-mono">source_id</span> by default.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">Column mapping</Label>
+                    <div className="flex gap-2">
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => setGpkgColMappings((m) => m.map((c) => ({ ...c, include: true })))}>All</button>
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => setGpkgColMappings((m) => m.map((c) => ({ ...c, include: false })))}>None</button>
+                    </div>
+                  </div>
+                  {/* Header */}
+                  <div className="grid grid-cols-[1rem_1fr_1fr_5rem] gap-2 px-2 text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                    <span />
+                    <span>Source column</span>
+                    <span>PostgreSQL name</span>
+                    <span>Type</span>
+                  </div>
+                  <div className="rounded-md border divide-y max-h-56 overflow-y-auto">
+                    {gpkgColMappings.map((col, i) => {
+                      const nameValid = VALID_IDENT_RE.test(col.pgName);
+                      return (
+                        <div key={col.origName} className={`grid grid-cols-[1rem_1fr_1fr_5rem] gap-2 items-center px-2 py-1.5 ${!col.include ? "opacity-40" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={col.include}
+                            onChange={(e) => setGpkgColMappings((m) => m.map((c, j) => j === i ? { ...c, include: e.target.checked } : c))}
+                            className="h-3 w-3"
+                          />
+                          <span className="text-xs font-mono truncate text-muted-foreground">{col.origName}</span>
+                          <Input
+                            value={col.pgName}
+                            onChange={(e) => setGpkgColMappings((m) => m.map((c, j) => j === i ? { ...c, pgName: e.target.value } : c))}
+                            disabled={!col.include}
+                            className={`h-6 text-xs font-mono px-1.5 ${!nameValid && col.include ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                          />
+                          <Select
+                            value={col.type}
+                            onValueChange={(v) => setGpkgColMappings((m) => m.map((c, j) => j === i ? { ...c, type: v as "text" | "numeric" } : c))}
+                            disabled={!col.include}
+                          >
+                            <SelectTrigger className="h-6 text-xs px-1.5">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text" className="text-xs">text</SelectItem>
+                              <SelectItem value="numeric" className="text-xs">numeric</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Progress */}
               {gpkgPhase === "importing" && (
                 <div className="space-y-1.5">
@@ -939,11 +1017,15 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
                     {gpkgPhase === "done" ? "Close" : "Cancel"}
                   </Button>
                 )}
-                {gpkgPhase === "ready" && (
-                  <Button onClick={startGpkgImport} disabled={!gpkgTable.trim() || !gpkgSchema.trim()}>
-                    Import
-                  </Button>
-                )}
+                {gpkgPhase === "ready" && (() => {
+                  const hasInvalidName = gpkgColMappings.some((c) => c.include && !VALID_IDENT_RE.test(c.pgName));
+                  const noneIncluded = gpkgColMappings.length > 0 && gpkgColMappings.every((c) => !c.include);
+                  return (
+                    <Button onClick={startGpkgImport} disabled={!gpkgTable.trim() || !gpkgSchema.trim() || hasInvalidName || noneIncluded}>
+                      Import
+                    </Button>
+                  );
+                })()}
                 {gpkgPhase === "error" && (
                   <Button variant="outline" onClick={() => setGpkgPhase("idle")}>Back</Button>
                 )}
