@@ -80,10 +80,10 @@ export default function LandingPage() {
           className="mx-auto mb-8 rounded-xl"
         />
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          Manage Your PostGIS Data With Ease
+          Easily Manage PostGIS Data
         </h1>
         <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
-          Connect to any PostGIS database, browse your spatial tables, CRUD via an interactive map — no account required.
+          Connect to any PostGIS database, browse its spatial tables and visualize data on an interactive map — no account required.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3">
           <Button asChild size="lg">
@@ -94,6 +94,34 @@ export default function LandingPage() {
               View on GitHub
             </a>
           </Button>
+        </div>
+      </section>
+
+      {/* Audience */}
+      <section className="border-t bg-muted/30">
+        <div className="mx-auto max-w-5xl px-6 py-16">
+          <p className="text-center text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-10">Built for energy industry professionals</p>
+          <div className="grid sm:grid-cols-3 gap-8 text-center">
+            {[
+              {
+                title: "Analysts",
+                body: "Quickly explore and QA spatial datasets — substations, pipelines, sites, and assets — without writing a line of SQL.",
+              },
+              {
+                title: "Business Developers",
+                body: "Visualize opportunity maps, service territories, and project footprints to support siting decisions and partnership conversations.",
+              },
+              {
+                title: "Project Developers",
+                body: "Track project portfolios on a live map, filter by status or region, and manage point data directly from the browser.",
+              },
+            ].map(({ title, body }) => (
+              <div key={title} className="flex flex-col items-center">
+                <h3 className="font-semibold mb-2">{title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

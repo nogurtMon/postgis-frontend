@@ -2,6 +2,11 @@
 import React from "react";
 import type { TableRow, MapLayer, LayerFilter, FilterOperator, RadiusScale } from "@/lib/types";
 import { CreateTableDialog } from "@/components/create-table-dialog";
+import { DeleteTableDialog } from "@/components/delete-table-dialog";
+import { RenameTableDialog } from "@/components/rename-table-dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import {
   ChevronDown, ChevronRight, Eye, EyeOff, ChevronUp, ChevronDown as ChevronDownIcon, X, Plus,
-  Check, MapPin, TriangleAlert,
+  Check, MapPin, TriangleAlert, MoreHorizontal,
 } from "lucide-react";
 
 interface Props {
@@ -300,6 +305,9 @@ export function TableSidebar({
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const [expandedLayer, setExpandedLayer] = React.useState<string | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
+
+  const [deleteTarget, setDeleteTarget] = React.useState<{ schema: string; table: string } | null>(null);
+  const [renameTarget, setRenameTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [assigningSrid, setAssigningSrid] = React.useState<string | null>(null);
   const [sridInput, setSridInput] = React.useState("4326");
@@ -453,6 +461,11 @@ export function TableSidebar({
                           <p className="max-w-48 text-sm truncate">{t.table_name}</p>
                           <div className="flex flex-row gap-2 items-center">
                             <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
+                            {t.row_count != null && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {t.row_count.toLocaleString()} rows
+                              </p>
+                            )}
                             {sridUnknown ? (
                               <button
                                 className="flex items-center gap-0.5 text-[10px] text-amber-500 hover:text-amber-600"
@@ -481,6 +494,24 @@ export function TableSidebar({
                         >
                           {alreadyAdded ? <Check className="h-3 w-3"/> : <Plus className="h-3 w-3" />}
                         </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0 text-muted-foreground">
+                              <MoreHorizontal className="h-3 w-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setRenameTarget({ schema: t.table_schema, table: t.table_name })}>
+                              Rename / Move
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => setDeleteTarget({ schema: t.table_schema, table: t.table_name })}
+                            >
+                              Delete table
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
 
                       {isAssigning && (
@@ -691,6 +722,33 @@ export function TableSidebar({
         dsn={dsn}
         onCreated={() => setRefreshKey((k) => k + 1)}
       />
+      {renameTarget && (
+        <RenameTableDialog
+          open={!!renameTarget}
+          onOpenChange={(v) => { if (!v) setRenameTarget(null); }}
+          dsn={dsn}
+          schema={renameTarget.schema}
+          table={renameTarget.table}
+          onRenamed={() => {
+            setRenameTarget(null);
+            setRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteTableDialog
+          open={!!deleteTarget}
+          onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}
+          dsn={dsn}
+          schema={deleteTarget.schema}
+          table={deleteTarget.table}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            setRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+
     </aside>
   );
 }

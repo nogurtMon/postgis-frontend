@@ -38,7 +38,7 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave, onDisconnect }
         <DialogHeader>
           <DialogTitle>Connection Settings</DialogTitle>
           <DialogDescription>
-            Enter your PostgreSQL / PostGIS connection string. Stored only in
+            Enter your PostgreSQL connection string. Stored only in
             your browser&apos;s local storage.
           </DialogDescription>
         </DialogHeader>
@@ -54,6 +54,18 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave, onDisconnect }
               className="font-mono text-sm"
             />
           </div>
+
+          <p className="text-sm text-muted-foreground">
+            Don&apos;t have a PostgreSQL database with PostGIS?{" Try "}
+            <a
+              href="https://neon.tech"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-foreground underline underline-offset-2 hover:text-primary"
+            >
+              Neon
+            </a>{" "}
+          </p>
 
           <div className="flex justify-between gap-2">
             {dsn && (

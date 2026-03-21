@@ -4,6 +4,7 @@ export interface TableRow {
   geom_col: string | null;
   geom_type: string | null;
   srid: number | null;
+  row_count?: number | null;
 }
 
 export type FilterOperator =
