@@ -6,6 +6,7 @@ export interface TableRow {
   srid: number | null;
   row_count?: number | null;
   has_pk?: boolean | null;
+  has_spatial_index?: boolean | null;
 }
 
 export type FilterOperator =

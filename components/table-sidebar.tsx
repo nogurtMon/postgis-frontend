@@ -320,6 +320,10 @@ export function TableSidebar({
   const [pkLoading, setPkLoading] = React.useState(false);
   const [pkError, setPkError] = React.useState<string | null>(null);
 
+  const [creatingIdx, setCreatingIdx] = React.useState<string | null>(null);
+  const [idxLoading, setIdxLoading] = React.useState(false);
+  const [idxError, setIdxError] = React.useState<string | null>(null);
+
   async function handleAssignSrid(t: TableRow) {
     setAssignLoading(true);
     setAssignError(null);
@@ -461,22 +465,12 @@ export function TableSidebar({
                   const sridUnknown = !t.srid || t.srid === 0;
                   const isAssigning = assigningSrid === key;
                   const isFixingPk = fixingPk === key;
+                  const isCreatingIdx = creatingIdx === key;
                   return (
                     <div key={key} className="border-b">
                       <div className="flex items-center px-3 py-1.5 gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="max-w-40 text-sm truncate">{t.table_name}</p>
-                            {t.has_pk === false && (
-                              <button
-                                className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 border border-amber-400 dark:border-amber-600 rounded px-1 py-0 leading-4 hover:bg-amber-50 dark:hover:bg-amber-950/40"
-                                title="No primary key — click to fix"
-                                onClick={() => { setFixingPk(isFixingPk ? null : key); setPkError(null); }}
-                              >
-                                no pk
-                              </button>
-                            )}
-                          </div>
+                          <p className="max-w-44 text-sm truncate">{t.table_name}</p>
                           <div className="flex flex-row gap-2 items-center">
                             <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
                             {t.row_count != null && (
@@ -501,6 +495,28 @@ export function TableSidebar({
                               <p className="text-[10px] text-muted-foreground">SRID {t.srid}</p>
                             )}
                           </div>
+                          {(t.has_pk === false || t.has_spatial_index === false) && (
+                            <div className="flex flex-row gap-1.5 items-center mt-0.5">
+                              {t.has_pk === false && (
+                                <button
+                                  className="text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 border border-amber-400 dark:border-amber-600 rounded px-1 leading-4 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                                  title="No primary key — click to fix"
+                                  onClick={() => { setFixingPk(isFixingPk ? null : key); setPkError(null); }}
+                                >
+                                  no pk
+                                </button>
+                              )}
+                              {t.has_spatial_index === false && (
+                                <button
+                                  className="text-[9px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400 border border-blue-400 dark:border-blue-600 rounded px-1 leading-4 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                                  title="No spatial index — map rendering will be slow. Click to fix."
+                                  onClick={() => { setCreatingIdx(isCreatingIdx ? null : key); setIdxError(null); }}
+                                >
+                                  no index
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <Button
                           size="sm"
@@ -605,6 +621,45 @@ export function TableSidebar({
                             </Button>
                           </div>
                           {pkError && <p className="text-[10px] text-destructive break-words">{pkError}</p>}
+                        </div>
+                      )}
+
+                      {isCreatingIdx && (
+                        <div className="px-3 pb-2 space-y-1.5 bg-blue-50/50 dark:bg-blue-950/20 border-t">
+                          <p className="text-[10px] text-muted-foreground pt-1.5">
+                            Creates a <span className="font-mono">GIST</span> index on <span className="font-mono">{t.geom_col}</span> and runs <span className="font-mono">ANALYZE</span>. Required for fast tile rendering on large tables.
+                          </p>
+                          <div className="flex gap-1.5 items-center">
+                            <Button
+                              size="sm" className="h-7 text-xs"
+                              disabled={idxLoading}
+                              onClick={async () => {
+                                setIdxLoading(true);
+                                setIdxError(null);
+                                try {
+                                  const res = await fetch("/api/pg/create-spatial-index", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ dsn, schema: t.table_schema, table: t.table_name, geomCol: t.geom_col }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok) throw new Error(data.error);
+                                  setCreatingIdx(null);
+                                  setRefreshKey((k) => k + 1);
+                                } catch (e: any) {
+                                  setIdxError(e.message);
+                                } finally {
+                                  setIdxLoading(false);
+                                }
+                              }}
+                            >
+                              {idxLoading ? "Creating…" : "Create spatial index"}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setCreatingIdx(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                          {idxError && <p className="text-[10px] text-destructive break-words">{idxError}</p>}
                         </div>
                       )}
                     </div>

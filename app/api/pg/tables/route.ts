@@ -25,7 +25,16 @@ export async function POST(req: NextRequest) {
            EXISTS (
              SELECT 1 FROM pg_constraint pk
              WHERE pk.conrelid = cls.oid AND pk.contype = 'p'
-           ) AS has_pk
+           ) AS has_pk,
+           EXISTS (
+             SELECT 1
+             FROM pg_index idx
+             JOIN pg_class ic ON ic.oid = idx.indexrelid
+             JOIN pg_am am ON am.oid = ic.relam
+             WHERE idx.indrelid = cls.oid
+               AND am.amname = 'gist'
+               AND a.attnum = ANY(idx.indkey::smallint[])
+           ) AS has_spatial_index
     FROM   pg_class cls
     JOIN   pg_namespace n   ON n.oid = cls.relnamespace
     JOIN   pg_attribute a   ON a.attrelid = cls.oid

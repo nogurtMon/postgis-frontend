@@ -44,6 +44,7 @@ export async function GET(
   const schema = searchParams.get("schema");
   const table = searchParams.get("table");
   const geomCol = searchParams.get("geomCol") ?? "geom";
+  const srid = parseInt(searchParams.get("srid") ?? "4326", 10);
 
   if (!dsn?.startsWith("postgres"))
     return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
@@ -87,6 +88,13 @@ export async function GET(
 
     const selectCols = propCols.map(qi).join(", ");
 
+    // Transform the tile envelope to the geometry's native SRID for the WHERE filter.
+    // This allows PostgreSQL to use the GIST spatial index on the geometry column.
+    // Only fall back to transforming the geometry when srid is already 3857.
+    const envelopeExpr = srid === 3857
+      ? `ST_TileEnvelope($2, $3, $4)`
+      : `ST_Transform(ST_TileEnvelope($2, $3, $4), ${srid})`;
+
     const sql = `
       SELECT ST_AsMVT(tile, $1, 4096, 'geom') AS mvt
       FROM (
@@ -98,7 +106,7 @@ export async function GET(
           ) AS geom
           ${propCols.length > 0 ? `, ${selectCols}` : ""}
         FROM ${qi(schema)}.${qi(table)}
-        WHERE ST_Transform(${qi(geomCol)}, 3857) && ST_TileEnvelope($2, $3, $4)
+        WHERE ${qi(geomCol)} && ${envelopeExpr}
           ${whereFilter}
       ) AS tile
       WHERE tile.geom IS NOT NULL
@@ -107,7 +115,11 @@ export async function GET(
     const { rows } = await pool.query(sql, queryParams);
     const mvt: Buffer = rows[0].mvt;
     return new NextResponse(new Uint8Array(mvt), {
-      headers: { "Content-Type": "application/vnd.mapbox-vector-tile" },
+      headers: {
+        "Content-Type": "application/vnd.mapbox-vector-tile",
+        // Cache tiles in the browser for 5 minutes — re-validates if data version changes
+        "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+      },
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

@@ -24,6 +24,7 @@ function buildTileUrl(layer: MapLayer): string {
     schema: layer.table.table_schema,
     table: layer.table.table_name,
     geomCol: layer.table.geom_col ?? "geom",
+    srid: String(layer.table.srid ?? 4326),
   });
   const validFilters = layer.filters.filter((f) => f.column.trim());
   if (validFilters.length > 0) {
@@ -205,8 +206,14 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
   }, [overlay, deckLayers]);
 
   React.useEffect(() => {
-    overlay.setProps({ layers: deckLayers });
-  }, [overlay, deckLayers]);
+    overlay.setProps({
+      layers: deckLayers,
+      getCursor: ({ isHovering }: { isHovering: boolean }) => {
+        if (drawLayer) return "crosshair";
+        return isHovering ? "pointer" : "grab";
+      },
+    });
+  }, [overlay, deckLayers, drawLayer]);
 
   function handleEditClick() {
     if (!selection) return;
