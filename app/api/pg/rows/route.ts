@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid column: ${col}` }, { status: 400 });
   }
 
+  const pool = getPool(dsn);
+
   // Check whether the 'id' column exists but has no default (e.g. imported tables).
   // If so, auto-generate one with MAX(id)+1 rather than making the user fill it in.
   const idCheck = await pool.query(
@@ -69,7 +71,6 @@ export async function POST(req: NextRequest) {
   const sql = `INSERT INTO ${ident(schema, table)} (${colList.join(", ")}) VALUES (${valList.join(", ")}) RETURNING id`;
 
   try {
-    const pool = getPool(dsn);
     const result = await pool.query(sql, paramValues);
     return NextResponse.json({ success: true, id: result.rows[0]?.id });
   } catch (e: any) {
