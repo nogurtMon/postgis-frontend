@@ -222,6 +222,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
   const [arcUrl, setArcUrl] = React.useState("");
   const [arcPhase, setArcPhase] = React.useState<ImportPhase>("idle");
   const [arcMeta, setArcMeta] = React.useState<ArcGISMeta | null>(null);
+  const [arcColMappings, setArcColMappings] = React.useState<GpkgColMapping[]>([]);
   const [arcSchema, setArcSchema] = React.useState("public");
   const [arcTable, setArcTable] = React.useState("");
   const [arcProgress, setArcProgress] = React.useState({ done: 0, total: 0 });
@@ -239,6 +240,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
     setArcUrl("");
     setArcPhase("idle");
     setArcMeta(null);
+    setArcColMappings([]);
     setArcSchema("public");
     setArcTable("");
     setArcProgress({ done: 0, total: 0 });
@@ -309,13 +311,19 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
         count = countJson.count ?? 0;
       } catch { count = 0; }
 
+      const fields: ArcGISField[] = (metaJson.fields ?? []).filter((f: ArcGISField) => !SKIP_FIELD_TYPES.has(f.type));
       setArcMeta({
         name: metaJson.name ?? "Layer",
         geometryType: metaJson.geometryType ?? "",
-        fields: (metaJson.fields ?? []).filter((f: ArcGISField) => !SKIP_FIELD_TYPES.has(f.type)),
+        fields,
         maxRecordCount: metaJson.maxRecordCount ?? 1000,
         count,
       });
+      setArcColMappings(fields.map((f) => {
+        let pgName = sanitizeFieldName(f.name);
+        if (pgName === "f_id") pgName = "source_id";
+        return { origName: f.name, pgName, type: arcgisTypeToPostgres(f.type), include: true };
+      }));
       setArcTable(suggestTableName(metaJson.name ?? "layer"));
       setArcPhase("ready");
     } catch (e: any) {
@@ -330,13 +338,8 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
     setArcPhase("importing");
     setArcProgress({ done: 0, total: arcMeta.count });
 
-    const fieldNameMap = new Map<string, string>();
-    for (const f of arcMeta.fields) fieldNameMap.set(f.name, sanitizeFieldName(f.name));
-
-    const columns = arcMeta.fields.map((f) => ({
-      name: fieldNameMap.get(f.name)!,
-      type: arcgisTypeToPostgres(f.type),
-    }));
+    const includedCols = arcColMappings.filter((c) => c.include);
+    const columns = includedCols.map((c) => ({ name: c.pgName, type: c.type }));
 
     const createRes = await fetch("/api/pg/create-table", {
       method: "POST",
@@ -352,22 +355,12 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
     const layerUrl = normalizeLayerUrl(arcUrl);
 
-    // Fetch all object IDs (paginated — some services cap returnIdsOnly too)
+    // returnIdsOnly bypasses maxRecordCount and returns all IDs in one call
     let allIds: number[] = [];
     try {
-      const idPageSize = 10000;
-      let idOffset = 0;
-      while (true) {
-        const j = await arcFetch(
-          `${layerUrl}/query?where=1%3D1&returnIdsOnly=true&f=json` +
-          `&resultOffset=${idOffset}&resultRecordCount=${idPageSize}`
-        );
-        if (j.error) throw new Error(j.error.message ?? "Failed to fetch object IDs");
-        const page: number[] = j.objectIds ?? [];
-        allIds = allIds.concat(page);
-        if (page.length < idPageSize) break;
-        idOffset += page.length;
-      }
+      const j = await arcFetch(`${layerUrl}/query?where=1%3D1&returnIdsOnly=true&f=json`);
+      if (j.error) throw new Error(j.error.message ?? "Failed to fetch object IDs");
+      allIds = j.objectIds ?? [];
     } catch (e: any) { setArcError(e.message ?? "Failed to fetch object IDs"); setArcPhase("error"); return; }
 
     setArcProgress({ done: 0, total: allIds.length });
@@ -390,9 +383,9 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
         .filter((f: any) => f.geometry != null)
         .map((f: any) => {
           const attrs: Record<string, any> = {};
-          for (const [orig, pg] of fieldNameMap.entries()) {
-            const val = f.properties?.[orig];
-            attrs[pg] = val == null ? null : String(val);
+          for (const col of includedCols) {
+            const val = f.properties?.[col.origName];
+            attrs[col.pgName] = val == null ? null : String(val);
           }
           return { geomJson: JSON.stringify(f.geometry), attrs };
         });
@@ -771,6 +764,49 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
                   <div className="space-y-1.5">
                     <Label htmlFor="arc-table" className="text-xs">Table name</Label>
                     <Input id="arc-table" value={arcTable} onChange={(e) => setArcTable(e.target.value)} className="h-8 text-sm font-mono" placeholder="my_layer" />
+                  </div>
+                </div>
+              )}
+
+              {/* Column mapping */}
+              {arcPhase === "ready" && arcColMappings.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">
+                    A new <span className="font-mono">id SERIAL PRIMARY KEY</span> is auto-generated. Any source ID column is mapped to <span className="font-mono">source_id</span> by default.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">Column mapping</Label>
+                    <div className="flex gap-2">
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => setArcColMappings((m) => m.map((c) => ({ ...c, include: true })))}>All</button>
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => setArcColMappings((m) => m.map((c) => ({ ...c, include: false })))}>None</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[1rem_1fr_1fr_5rem] gap-2 px-2 text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                    <span /><span>Source field</span><span>PostgreSQL name</span><span>Type</span>
+                  </div>
+                  <div className="rounded-md border divide-y max-h-56 overflow-y-auto">
+                    {arcColMappings.map((col, i) => {
+                      const nameValid = VALID_IDENT_RE.test(col.pgName);
+                      return (
+                        <div key={col.origName} className={`grid grid-cols-[1rem_1fr_1fr_5rem] gap-2 items-center px-2 py-1.5 ${!col.include ? "opacity-40" : ""}`}>
+                          <input type="checkbox" checked={col.include} onChange={(e) => setArcColMappings((m) => m.map((c, j) => j === i ? { ...c, include: e.target.checked } : c))} className="h-3 w-3" />
+                          <span className="text-xs font-mono truncate text-muted-foreground">{col.origName}</span>
+                          <Input
+                            value={col.pgName}
+                            onChange={(e) => setArcColMappings((m) => m.map((c, j) => j === i ? { ...c, pgName: e.target.value } : c))}
+                            disabled={!col.include}
+                            className={`h-6 text-xs font-mono px-1.5 ${!nameValid && col.include ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                          />
+                          <Select value={col.type} onValueChange={(v) => setArcColMappings((m) => m.map((c, j) => j === i ? { ...c, type: v as "text" | "numeric" } : c))} disabled={!col.include}>
+                            <SelectTrigger className="h-6 text-xs px-1.5"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text" className="text-xs">text</SelectItem>
+                              <SelectItem value="numeric" className="text-xs">numeric</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
