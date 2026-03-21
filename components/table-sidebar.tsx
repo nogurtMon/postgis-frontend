@@ -5,6 +5,7 @@ import { CreateTableDialog } from "@/components/create-table-dialog";
 import { DeleteTableDialog } from "@/components/delete-table-dialog";
 import { RenameTableDialog } from "@/components/rename-table-dialog";
 import { AttributeTableDialog } from "@/components/attribute-table-dialog";
+import { TableInfoDialog } from "@/components/table-info-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -310,6 +311,7 @@ export function TableSidebar({
   const [deleteTarget, setDeleteTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [renameTarget, setRenameTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [attrTableTarget, setAttrTableTarget] = React.useState<{ schema: string; table: string } | null>(null);
+  const [tableInfoTarget, setTableInfoTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [assigningSrid, setAssigningSrid] = React.useState<string | null>(null);
   const [sridInput, setSridInput] = React.useState("4326");
@@ -537,6 +539,9 @@ export function TableSidebar({
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => setAttrTableTarget({ schema: t.table_schema, table: t.table_name })}>
                               Open attribute table
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setTableInfoTarget({ schema: t.table_schema, table: t.table_name })}>
+                              Table info / columns
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setRenameTarget({ schema: t.table_schema, table: t.table_name })}>
                               Rename / Move
@@ -849,6 +854,16 @@ export function TableSidebar({
             setRenameTarget(null);
             setRefreshKey((k) => k + 1);
           }}
+        />
+      )}
+      {tableInfoTarget && (
+        <TableInfoDialog
+          open={!!tableInfoTarget}
+          onOpenChange={(v) => { if (!v) setTableInfoTarget(null); }}
+          dsn={dsn}
+          schema={tableInfoTarget.schema}
+          table={tableInfoTarget.table}
+          onChanged={() => setRefreshKey((k) => k + 1)}
         />
       )}
       {attrTableTarget && (
