@@ -21,7 +21,11 @@ export async function POST(req: NextRequest) {
            a.attname                      AS geom_col,
            COALESCE(gc.type, upper(t.typname)) AS geom_type,
            COALESCE(gc.srid, 4326)        AS srid,
-           GREATEST(cls.reltuples::bigint, 0) AS row_count
+           GREATEST(cls.reltuples::bigint, 0) AS row_count,
+           EXISTS (
+             SELECT 1 FROM pg_constraint pk
+             WHERE pk.conrelid = cls.oid AND pk.contype = 'p'
+           ) AS has_pk
     FROM   pg_class cls
     JOIN   pg_namespace n   ON n.oid = cls.relnamespace
     JOIN   pg_attribute a   ON a.attrelid = cls.oid

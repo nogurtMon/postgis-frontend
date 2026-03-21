@@ -30,7 +30,7 @@ function arcgisTypeToPostgres(type: string): "text" | "numeric" {
   ) ? "numeric" : "text";
 }
 
-const RESERVED_NAMES = new Set(["id", "geom", "created_at", "last_updated"]);
+const RESERVED_NAMES = new Set(["id", "geom"]);
 
 function sanitizeFieldName(name: string): string {
   let s = name.toLowerCase().replace(/[^a-z0-9_]/g, "_");
@@ -83,7 +83,7 @@ interface ArcGISMeta {
   count: number;
 }
 
-type ImportPhase = "idle" | "loading-meta" | "ready" | "importing" | "done" | "error";
+type ImportPhase = "idle" | "loading-meta" | "ready" | "importing" | "cancelling" | "cancelled" | "done" | "error";
 
 // ---- GeoPackage helpers ----
 
@@ -209,6 +209,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
   const [geomType, setGeomType] = React.useState("Point");
   const [srid, setSrid] = React.useState("4326");
   const [columns, setColumns] = React.useState<UserColumn[]>([]);
+  const [timestamps, setTimestamps] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -240,6 +241,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
     setGeomType("Point");
     setSrid("4326");
     setColumns([]);
+    setTimestamps(false);
     setError(null);
     setActiveTab("blank");
     setArcUrl("");
@@ -286,7 +288,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
       const res = await fetch("/api/pg/create-table", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table: tableName, geomType, srid, columns }),
+        body: JSON.stringify({ dsn, schema, table: tableName, geomType, srid, columns, timestamps }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -352,7 +354,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
       body: JSON.stringify({
         dsn, schema: arcSchema, table: arcTable,
         geomType: mapGeomType(arcMeta.geometryType),
-        srid: 4326, columns,
+        srid: 4326, columns, timestamps: false,
       }),
     });
     const createData = await createRes.json();
@@ -372,7 +374,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
     const batchSize = Math.min(arcMeta.maxRecordCount, 100);
     for (let i = 0; i < allIds.length; i += batchSize) {
-      if (abortRef.current) { setArcError("Import cancelled."); setArcPhase("error"); return; }
+      if (abortRef.current) {
+        setArcPhase("cancelled");
+        return;
+      }
 
       const batchIds = allIds.slice(i, i + batchSize);
       let features: any[];
@@ -410,6 +415,17 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
     setArcPhase("done");
     onCreated();
+  }
+
+  async function dropArcTable() {
+    await fetch("/api/pg/drop-table", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dsn, schema: arcSchema, table: arcTable }),
+    });
+    onCreated();
+    reset();
+    setArcPhase("idle");
   }
 
   const arcPct = arcProgress.total > 0 ? Math.round((arcProgress.done / arcProgress.total) * 100) : null;
@@ -492,7 +508,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
       body: JSON.stringify({
         dsn, schema: gpkgSchema, table: gpkgTable,
         geomType: finalGeomType, srid: layer.srid || 4326,
-        columns: pgCols,
+        columns: pgCols, timestamps: false,
       }),
     });
     const createData = await createRes.json();
@@ -561,15 +577,17 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
 
   const fixedColumns = [
     { name: "id", type: "SERIAL PRIMARY KEY" },
-    { name: "created_at", type: "TIMESTAMP DEFAULT NOW()" },
-    { name: "last_updated", type: "TIMESTAMP DEFAULT NOW()" },
+    ...(timestamps ? [
+      { name: "created_at", type: "TIMESTAMP DEFAULT NOW()" },
+      { name: "last_updated", type: "TIMESTAMP DEFAULT NOW()" },
+    ] : []),
     { name: "geom", type: `GEOMETRY(${geomType}, ${srid})` },
   ];
 
   const canCreate = tableName.trim().length > 0 && schema.trim().length > 0;
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (arcPhase === "importing" || gpkgPhase === "importing") return; onOpenChange(v); }}>
+    <Dialog open={open} onOpenChange={(v) => { if (arcPhase === "importing" || arcPhase === "cancelling" || gpkgPhase === "importing") return; onOpenChange(v); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New Table</DialogTitle>
@@ -634,6 +652,17 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
               />
             </div>
           </div>
+
+          {/* Timestamps option */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={timestamps}
+              onChange={(e) => setTimestamps(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span className="text-sm">Add <span className="font-mono text-xs">created_at</span> and <span className="font-mono text-xs">last_updated</span> columns</span>
+          </label>
 
           {/* Fixed columns preview */}
           <div className="space-y-1.5">
@@ -817,13 +846,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
               )}
 
               {/* Progress */}
-              {arcPhase === "importing" && (
+              {(arcPhase === "importing" || arcPhase === "cancelling") && (
                 <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    This may take a while. You can navigate to other tabs — the import will continue in the background.
-                  </p>
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Importing…</span>
+                    <span>{arcPhase === "cancelling" ? "Cancelling — finishing current batch…" : "Importing…"}</span>
                     <span>
                       {arcProgress.done.toLocaleString()}
                       {arcProgress.total > 0 ? ` / ${arcProgress.total.toLocaleString()}` : ""} features
@@ -833,6 +859,18 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
                     <div className="h-full bg-primary transition-all duration-300" style={{ width: arcPct != null ? `${arcPct}%` : "100%" }} />
                   </div>
                   {arcPct != null && <p className="text-xs text-center text-muted-foreground">{arcPct}%</p>}
+                </div>
+              )}
+
+              {/* Cancelled */}
+              {arcPhase === "cancelled" && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 space-y-2">
+                  <p className="text-sm font-medium">Import cancelled</p>
+                  <p className="text-xs text-muted-foreground">
+                    {arcProgress.done.toLocaleString()} of {arcProgress.total.toLocaleString()} features were imported into{" "}
+                    <span className="font-mono">{arcSchema}.{arcTable}</span>.
+                    What would you like to do with the partial data?
+                  </p>
                 </div>
               )}
 
@@ -850,13 +888,34 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
               )}
 
               <div className="flex justify-end gap-2">
-                {arcPhase !== "importing" && (
+                {arcPhase === "importing" && (
+                  <Button
+                    variant="outline"
+                    onClick={() => { abortRef.current = true; setArcPhase("cancelling"); }}
+                  >
+                    Cancel import
+                  </Button>
+                )}
+                {arcPhase === "cancelled" && (
+                  <>
+                    <Button variant="destructive" onClick={dropArcTable}>Drop table</Button>
+                    <Button onClick={() => { onCreated(); onOpenChange(false); }}>Keep partial data</Button>
+                  </>
+                )}
+                {(arcPhase === "idle" || arcPhase === "loading-meta" || arcPhase === "ready" || arcPhase === "done" || arcPhase === "error") && (
                   <Button variant="outline" onClick={() => onOpenChange(false)}>
                     {arcPhase === "done" ? "Close" : "Cancel"}
                   </Button>
                 )}
                 {arcPhase === "ready" && (
-                  <Button onClick={startArcImport} disabled={!arcTable.trim() || !arcSchema.trim()}>
+                  <Button
+                    onClick={startArcImport}
+                    disabled={
+                      !arcTable.trim() || !arcSchema.trim() ||
+                      arcColMappings.some((c) => c.include && !VALID_IDENT_RE.test(c.pgName)) ||
+                      arcColMappings.every((c) => !c.include)
+                    }
+                  >
                     Import
                   </Button>
                 )}

@@ -16,7 +16,7 @@ const VALID_IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const VALID_GEOM_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "Geometry"];
 
 export async function POST(req: NextRequest) {
-  const { dsn, schema, table, geomType, srid, columns } = await req.json();
+  const { dsn, schema, table, geomType, srid, columns, timestamps } = await req.json();
 
   if (!dsn?.startsWith("postgres"))
     return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
@@ -45,12 +45,14 @@ export async function POST(req: NextRequest) {
     await client.query(`CREATE SCHEMA IF NOT EXISTS ${ident(schema)}`);
 
     // Build column list
-    const colParts: string[] = [
-      "id SERIAL PRIMARY KEY",
-      "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
-      "last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
-      `geom GEOMETRY(${geomType}, ${sridNum})`,
-    ];
+    const colParts: string[] = ["id SERIAL PRIMARY KEY"];
+    if (timestamps) {
+      colParts.push(
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+      );
+    }
+    colParts.push(`geom GEOMETRY(${geomType}, ${sridNum})`);
 
     for (const col of columns ?? []) {
       const typeSql = col.type === "text" ? "TEXT" : "NUMERIC";
@@ -67,25 +69,27 @@ export async function POST(req: NextRequest) {
     // Spatial index
     await client.query(`CREATE INDEX ON ${tableIdent} USING GIST (geom)`);
 
-    // Trigger function + trigger for auto-updating last_updated
-    const fnIdent = ident(schema, `update_last_updated_${table}`);
-    const triggerIdent = ident(`${table}_last_updated_trg`);
+    // Trigger for auto-updating last_updated (only when timestamps are enabled)
+    if (timestamps) {
+      const fnIdent = ident(schema, `update_last_updated_${table}`);
+      const triggerIdent = ident(`${table}_last_updated_trg`);
 
-    await client.query(`
-      CREATE OR REPLACE FUNCTION ${fnIdent}()
-      RETURNS TRIGGER LANGUAGE plpgsql AS $$
-      BEGIN
-        NEW.last_updated = CURRENT_TIMESTAMP;
-        RETURN NEW;
-      END;
-      $$
-    `);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${fnIdent}()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $$
+        BEGIN
+          NEW.last_updated = CURRENT_TIMESTAMP;
+          RETURN NEW;
+        END;
+        $$
+      `);
 
-    await client.query(`
-      CREATE TRIGGER ${triggerIdent}
-      BEFORE UPDATE ON ${tableIdent}
-      FOR EACH ROW EXECUTE FUNCTION ${fnIdent}()
-    `);
+      await client.query(`
+        CREATE TRIGGER ${triggerIdent}
+        BEFORE UPDATE ON ${tableIdent}
+        FOR EACH ROW EXECUTE FUNCTION ${fnIdent}()
+      `);
+    }
 
     await client.query("COMMIT");
     return NextResponse.json({ success: true });

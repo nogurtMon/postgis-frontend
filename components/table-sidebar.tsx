@@ -4,6 +4,7 @@ import type { TableRow, MapLayer, LayerFilter, FilterOperator, RadiusScale } fro
 import { CreateTableDialog } from "@/components/create-table-dialog";
 import { DeleteTableDialog } from "@/components/delete-table-dialog";
 import { RenameTableDialog } from "@/components/rename-table-dialog";
+import { AttributeTableDialog } from "@/components/attribute-table-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -308,11 +309,16 @@ export function TableSidebar({
 
   const [deleteTarget, setDeleteTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [renameTarget, setRenameTarget] = React.useState<{ schema: string; table: string } | null>(null);
+  const [attrTableTarget, setAttrTableTarget] = React.useState<{ schema: string; table: string } | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [assigningSrid, setAssigningSrid] = React.useState<string | null>(null);
   const [sridInput, setSridInput] = React.useState("4326");
   const [assignLoading, setAssignLoading] = React.useState(false);
   const [assignError, setAssignError] = React.useState<string | null>(null);
+
+  const [fixingPk, setFixingPk] = React.useState<string | null>(null);
+  const [pkLoading, setPkLoading] = React.useState(false);
+  const [pkError, setPkError] = React.useState<string | null>(null);
 
   async function handleAssignSrid(t: TableRow) {
     setAssignLoading(true);
@@ -454,16 +460,28 @@ export function TableSidebar({
                   const alreadyAdded = layerKeys.has(key);
                   const sridUnknown = !t.srid || t.srid === 0;
                   const isAssigning = assigningSrid === key;
+                  const isFixingPk = fixingPk === key;
                   return (
                     <div key={key} className="border-b">
                       <div className="flex items-center px-3 py-1.5 gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="max-w-44 text-sm truncate">{t.table_name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="max-w-40 text-sm truncate">{t.table_name}</p>
+                            {t.has_pk === false && (
+                              <button
+                                className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 border border-amber-400 dark:border-amber-600 rounded px-1 py-0 leading-4 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                                title="No primary key — click to fix"
+                                onClick={() => { setFixingPk(isFixingPk ? null : key); setPkError(null); }}
+                              >
+                                no pk
+                              </button>
+                            )}
+                          </div>
                           <div className="flex flex-row gap-2 items-center">
                             <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
                             {t.row_count != null && (
-                              <p className="text-[10px] text-muted-foreground">
-                                {t.row_count.toLocaleString()} rows
+                              <p className="text-[10px] text-muted-foreground" title="Estimated row count from PostgreSQL statistics. May be stale for recently modified tables.">
+                                ~{t.row_count.toLocaleString()} rows
                               </p>
                             )}
                             {sridUnknown ? (
@@ -501,6 +519,9 @@ export function TableSidebar({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setAttrTableTarget({ schema: t.table_schema, table: t.table_name })}>
+                              Open attribute table
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setRenameTarget({ schema: t.table_schema, table: t.table_name })}>
                               Rename / Move
                             </DropdownMenuItem>
@@ -544,6 +565,46 @@ export function TableSidebar({
                           {assignError && (
                             <p className="text-[10px] text-destructive break-words">{assignError}</p>
                           )}
+                        </div>
+                      )}
+
+                      {isFixingPk && (
+                        <div className="px-3 pb-2 space-y-1.5 bg-amber-50/50 dark:bg-amber-950/20 border-t">
+                          <p className="text-[10px] text-muted-foreground pt-1.5">
+                            Adds an <span className="font-mono">id SERIAL PRIMARY KEY</span> column.
+                            Existing rows are assigned sequential IDs automatically.
+                          </p>
+                          <div className="flex gap-1.5 items-center">
+                            <Button
+                              size="sm" className="h-7 text-xs"
+                              disabled={pkLoading}
+                              onClick={async () => {
+                                setPkLoading(true);
+                                setPkError(null);
+                                try {
+                                  const res = await fetch("/api/pg/add-primary-key", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ dsn, schema: t.table_schema, table: t.table_name }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok) throw new Error(data.error);
+                                  setFixingPk(null);
+                                  setRefreshKey((k) => k + 1);
+                                } catch (e: any) {
+                                  setPkError(e.message);
+                                } finally {
+                                  setPkLoading(false);
+                                }
+                              }}
+                            >
+                              {pkLoading ? "Adding…" : "Add primary key"}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setFixingPk(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                          {pkError && <p className="text-[10px] text-destructive break-words">{pkError}</p>}
                         </div>
                       )}
                     </div>
@@ -733,6 +794,15 @@ export function TableSidebar({
             setRenameTarget(null);
             setRefreshKey((k) => k + 1);
           }}
+        />
+      )}
+      {attrTableTarget && (
+        <AttributeTableDialog
+          open={!!attrTableTarget}
+          onOpenChange={(v) => { if (!v) setAttrTableTarget(null); }}
+          dsn={dsn}
+          schema={attrTableTarget.schema}
+          table={attrTableTarget.table}
         />
       )}
       {deleteTarget && (
