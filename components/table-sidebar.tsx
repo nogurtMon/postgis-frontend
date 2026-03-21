@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import type { TableRow, MapLayer, LayerFilter, FilterOperator, RadiusScale } from "@/lib/types";
+import { CreateTableDialog } from "@/components/create-table-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   ChevronDown, ChevronRight, Eye, EyeOff, ChevronUp, ChevronDown as ChevronDownIcon, X, Plus,
-  Check,
+  Check, MapPin, TriangleAlert,
 } from "lucide-react";
 
 interface Props {
@@ -22,6 +23,9 @@ interface Props {
   onRemoveLayer: (id: string) => void;
   onUpdateLayer: (id: string, patch: Partial<MapLayer>) => void;
   onMoveLayer: (id: string, dir: "up" | "down") => void;
+  drawLayerId?: string | null;
+  onStartDraw?: (layer: MapLayer) => void;
+  onStopDraw?: () => void;
 }
 
 const OPERATORS: FilterOperator[] = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "IS NULL", "IS NOT NULL"];
@@ -287,6 +291,7 @@ function LayerFilterEditor({
 export function TableSidebar({
   dsn, layers,
   onAddLayer, onRemoveLayer, onUpdateLayer, onMoveLayer,
+  drawLayerId, onStartDraw, onStopDraw,
 }: Props) {
   const [tab, setTab] = React.useState("tables");
   const [tables, setTables] = React.useState<TableRow[]>([]);
@@ -294,6 +299,38 @@ export function TableSidebar({
   const [error, setError] = React.useState<string | null>(null);
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const [expandedLayer, setExpandedLayer] = React.useState<string | null>(null);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [assigningSrid, setAssigningSrid] = React.useState<string | null>(null);
+  const [sridInput, setSridInput] = React.useState("4326");
+  const [assignLoading, setAssignLoading] = React.useState(false);
+  const [assignError, setAssignError] = React.useState<string | null>(null);
+
+  async function handleAssignSrid(t: TableRow) {
+    setAssignLoading(true);
+    setAssignError(null);
+    try {
+      const res = await fetch("/api/pg/assign-srid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dsn,
+          schema: t.table_schema,
+          table: t.table_name,
+          geomCol: t.geom_col,
+          srid: sridInput,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAssigningSrid(null);
+      setRefreshKey((k) => k + 1);
+    } catch (e: any) {
+      setAssignError(e.message);
+    } finally {
+      setAssignLoading(false);
+    }
+  }
 
   React.useEffect(() => {
     if (!dsn) {
@@ -318,7 +355,7 @@ export function TableSidebar({
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [dsn]);
+  }, [dsn, refreshKey]);
 
   // Only show spatial tables — non-spatial tables can't be added to the map
   const spatialTables = React.useMemo(() => tables.filter((t) => t.geom_col), [tables]);
@@ -376,6 +413,13 @@ export function TableSidebar({
           {!dsn && <p className="p-4 text-sm text-muted-foreground">No database connected.</p>}
           {loading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
           {error && <p className="p-4 text-sm text-destructive break-words">Error: {error}</p>}
+          {dsn && !loading && (
+            <div className="px-3 py-2 border-b">
+              <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-3 w-3 mr-1" /> New table
+              </Button>
+            </div>
+          )}
 
           {!loading && !error && [...schemas.entries()].map(([schema, schemaTables]) => {
             const isCollapsed = collapsed.has(schema);
@@ -400,16 +444,34 @@ export function TableSidebar({
                 {!isCollapsed && schemaTables.map((t) => {
                   const key = `${t.table_schema}.${t.table_name}`;
                   const alreadyAdded = layerKeys.has(key);
+                  const sridUnknown = !t.srid || t.srid === 0;
+                  const isAssigning = assigningSrid === key;
                   return (
-                    <div key={key} className="flex items-center border-b px-3 py-1.5 gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="max-w-48 text-sm truncate">{t.table_name}</p>
-                        <div className="flex flex-row gap-2">
-                        <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
-                        <p className="text-[10px] text-muted-foreground">SRID {t.srid}</p>
+                    <div key={key} className="border-b">
+                      <div className="flex items-center px-3 py-1.5 gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="max-w-48 text-sm truncate">{t.table_name}</p>
+                          <div className="flex flex-row gap-2 items-center">
+                            <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
+                            {sridUnknown ? (
+                              <button
+                                className="flex items-center gap-0.5 text-[10px] text-amber-500 hover:text-amber-600"
+                                onClick={() => {
+                                  setAssigningSrid(isAssigning ? null : key);
+                                  setSridInput("4326");
+                                  setAssignError(null);
+                                }}
+                                title="SRID unknown — tiles won't render. Click to assign."
+                              >
+                                <TriangleAlert className="h-2.5 w-2.5" />
+                                SRID unknown
+                              </button>
+                            ) : (
+                              <p className="text-[10px] text-muted-foreground">SRID {t.srid}</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <Button
+                        <Button
                           size="sm"
                           variant={alreadyAdded ? "ghost" : "outline"}
                           className="h-6 text-xs px-2 shrink-0"
@@ -419,6 +481,40 @@ export function TableSidebar({
                         >
                           {alreadyAdded ? <Check className="h-3 w-3"/> : <Plus className="h-3 w-3" />}
                         </Button>
+                      </div>
+
+                      {isAssigning && (
+                        <div className="px-3 pb-2 space-y-1.5 bg-amber-50/50 dark:bg-amber-950/20 border-t">
+                          <p className="text-[10px] text-muted-foreground pt-1.5">
+                            Assigns an SRID label without reprojecting coordinates.
+                            Use this when the data is already in the target CRS.
+                          </p>
+                          <div className="flex gap-1.5 items-center">
+                            <Input
+                              value={sridInput}
+                              onChange={(e) => setSridInput(e.target.value)}
+                              className="h-7 text-xs font-mono w-24"
+                              placeholder="4326"
+                            />
+                            <Button
+                              size="sm" className="h-7 text-xs"
+                              onClick={() => handleAssignSrid(t)}
+                              disabled={assignLoading}
+                            >
+                              {assignLoading ? "Saving…" : "Assign SRID"}
+                            </Button>
+                            <Button
+                              size="sm" variant="ghost" className="h-7 text-xs"
+                              onClick={() => setAssigningSrid(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          {assignError && (
+                            <p className="text-[10px] text-destructive break-words">{assignError}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -559,6 +655,28 @@ export function TableSidebar({
                       )}
 
                       <LayerFilterEditor layer={layer} dsn={dsn} onUpdateLayer={onUpdateLayer} />
+
+                      {isPoint && onStartDraw && (
+                        <div className="pt-1">
+                          {drawLayerId === layer.id ? (
+                            <Button
+                              size="sm" variant="secondary"
+                              className="h-7 text-xs w-full"
+                              onClick={onStopDraw}
+                            >
+                              <MapPin className="h-3 w-3 mr-1" /> Drawing… (click to cancel)
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 text-xs w-full"
+                              onClick={() => onStartDraw(layer)}
+                            >
+                              <MapPin className="h-3 w-3 mr-1" /> Add point
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -567,6 +685,12 @@ export function TableSidebar({
           })}
         </ScrollArea>
       )}
+      <CreateTableDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        dsn={dsn}
+        onCreated={() => setRefreshKey((k) => k + 1)}
+      />
     </aside>
   );
 }

@@ -80,10 +80,10 @@ export default function LandingPage() {
           className="mx-auto mb-8 rounded-xl"
         />
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          A Frontend for Your PostGIS Database
+          Manage Your PostGIS Data With Ease
         </h1>
         <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
-          Connect to any PostgreSQL + PostGIS database, browse your spatial tables, and visualize them on an interactive map — no account required.
+          Connect to any PostGIS database, browse your spatial tables, CRUD via an interactive map — no account required.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3">
           <Button asChild size="lg">

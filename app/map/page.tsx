@@ -7,22 +7,58 @@ import { TableSidebar } from "@/components/table-sidebar";
 import { useDsn } from "@/hooks/use-dsn";
 import { LAYER_COLORS, DEFAULT_STYLE } from "@/lib/types";
 import type { TableRow, MapLayer } from "@/lib/types";
+
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
+
+const LAYERS_KEY = "postgis-layers";
+const DSN_LS_KEY = "pg_dsn"; // must match the key used in use-dsn.ts
+
+function loadLayers(dsn: string): MapLayer[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(LAYERS_KEY) ?? "{}");
+    return (all[dsn] ?? []).map((l: MapLayer) => ({ ...l, dataVersion: 0 }));
+  } catch { return []; }
+}
+
+function saveLayers(dsn: string, layers: MapLayer[]) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LAYERS_KEY) ?? "{}");
+    all[dsn] = layers;
+    localStorage.setItem(LAYERS_KEY, JSON.stringify(all));
+  } catch {}
+}
 
 export default function Home() {
   const { dsn, setDsn, loaded } = useDsn();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
+  const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
+
+  // Load layers once on mount — read DSN directly from localStorage so there's
+  // no timing dependency on the useDsn state being populated yet.
+  React.useEffect(() => {
+    const storedDsn = localStorage.getItem(DSN_LS_KEY) ?? "";
+    if (storedDsn) setLayers(loadLayers(storedDsn));
+  }, []);
 
   // Auto-open settings on first load if no database is configured
   React.useEffect(() => {
     if (loaded && !dsn) setSettingsOpen(true);
   }, [loaded]);
 
-  // Clear layers when DSN changes
-  React.useEffect(() => { setLayers([]); }, [dsn]);
+  // Clear layers on disconnect
+  React.useEffect(() => {
+    if (loaded && !dsn) setLayers([]);
+  }, [dsn, loaded]);
+
+  // Persist whenever layers change — guard with loaded+dsn so we never
+  // save before the DSN is known or while disconnected.
+  React.useEffect(() => {
+    if (!loaded || !dsn) return;
+    saveLayers(dsn, layers);
+  }, [layers, loaded, dsn]);
 
   function addLayer(table: TableRow) {
     const key = `${table.table_schema}.${table.table_name}`;
@@ -47,6 +83,12 @@ export default function Home() {
 
   function updateLayer(id: string, patch: Partial<MapLayer>) {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+
+  function onLayerDataChanged(id: string) {
+    setLayers((prev) =>
+      prev.map((l) => l.id === id ? { ...l, dataVersion: (l.dataVersion ?? 0) + 1 } : l)
+    );
   }
 
   function moveLayer(id: string, dir: "up" | "down") {
@@ -94,9 +136,17 @@ export default function Home() {
           onRemoveLayer={removeLayer}
           onUpdateLayer={updateLayer}
           onMoveLayer={moveLayer}
+          drawLayerId={drawLayer?.id ?? null}
+          onStartDraw={setDrawLayer}
+          onStopDraw={() => setDrawLayer(null)}
         />
         <div className="flex-1 relative">
-          <MaplibreMap layers={layers} />
+          <MaplibreMap
+            layers={layers}
+            drawLayer={drawLayer}
+            onCancelDraw={() => setDrawLayer(null)}
+            onLayerDataChanged={onLayerDataChanged}
+          />
         </div>
       </div>
 

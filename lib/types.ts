@@ -41,6 +41,7 @@ export interface MapLayer {
   visible: boolean;
   style: LayerStyle;
   filters: LayerFilter[];
+  dataVersion?: number;
 }
 
 export const LAYER_COLORS = [

@@ -22,6 +22,7 @@
     "@types/mapbox-gl": "^3.4.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "deck.gl": "^9.1.14",
     "lucide-react": "^0.544.0",
     "mapbox-gl": "^3.15.0",

@@ -7,7 +7,10 @@ import { MVTLayer } from "@deck.gl/geo-layers";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { RowFormDialog } from "@/components/row-form-dialog";
+import { GeocoderControl } from "@/components/geocoder-control";
 import type { MapLayer } from "@/lib/types";
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -29,6 +32,9 @@ function buildTileUrl(layer: MapLayer): string {
       operator: f.operator,
       value: f.value,
     }))));
+  }
+  if (layer.dataVersion !== undefined) {
+    params.set("v", String(layer.dataVersion));
   }
   return `/api/pg/tiles/{z}/{x}/{y}?${params.toString()}`;
 }
@@ -55,14 +61,84 @@ const BASEMAPS: Record<string, { label: string; style: string | typeof SATELLITE
 
 type BasemapKey = keyof typeof BASEMAPS;
 
-export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
+interface Selection {
+  feature: any;
+  layer: MapLayer;
+}
+
+interface RowFormState {
+  mode: "insert" | "edit";
+  layer: MapLayer;
+  lng: number;
+  lat: number;
+  initialProps?: Record<string, any>;
+}
+
+interface Props {
+  layers: MapLayer[];
+  drawLayer?: MapLayer | null;
+  onCancelDraw?: () => void;
+  onLayerDataChanged?: (layerId: string) => void;
+}
+
+export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDataChanged }: Props) {
   const mapRef = React.useRef<any>(null);
-  const [selectedPoint, setSelectedPoint] = React.useState<any>(null);
-  const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [selection, setSelection] = React.useState<Selection | null>(null);
+  const [isPropsOpen, setIsPropsOpen] = React.useState(false);
+  const [deleteConfirming, setDeleteConfirming] = React.useState(false);
+  const [deleteLoading, setDeleteLoading] = React.useState(false);
+  const [rowFormState, setRowFormState] = React.useState<RowFormState | null>(null);
   const [basemap, setBasemap] = React.useState<BasemapKey>("liberty");
   const [showBasemapPicker, setShowBasemapPicker] = React.useState(false);
 
   const overlay = React.useMemo(() => new MapboxOverlay({ interleaved: false }), []);
+
+  // Cancel draw mode on Escape
+  React.useEffect(() => {
+    if (!drawLayer) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancelDraw?.();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawLayer, onCancelDraw]);
+
+  // Draw mode: native map click listener + crosshair cursor
+  // Using map.on("click") lets MapLibre handle the event normally (zoom/pan still work)
+  React.useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const canvas = map.getCanvas();
+
+    if (!drawLayer) {
+      canvas.style.cursor = "";
+      return;
+    }
+
+    canvas.style.cursor = "crosshair";
+
+    function handleMapClick(e: any) {
+      if (!drawLayer) return;
+      setRowFormState({
+        mode: "insert",
+        layer: drawLayer,
+        lng: e.lngLat.lng,
+        lat: e.lngLat.lat,
+      });
+      onCancelDraw?.();
+    }
+
+    map.on("click", handleMapClick);
+    return () => {
+      map.off("click", handleMapClick);
+      canvas.style.cursor = "";
+    };
+  }, [drawLayer, onCancelDraw]);
+
+  // Reset delete confirm when dialog closes
+  React.useEffect(() => {
+    if (!isPropsOpen) setDeleteConfirming(false);
+  }, [isPropsOpen]);
 
   const deckLayers = React.useMemo(() => {
     return layers
@@ -94,7 +170,9 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
             : layer.style.radius,
           pointRadiusUnits: "pixels",
           getFillColor: [...rgb, alpha] as [number, number, number, number],
-          getLineColor: isLine ? [...rgb, alpha] as [number, number, number, number] : [...hexToRgb(layer.style.strokeColor ?? "#ffffff"), alpha] as [number, number, number, number],
+          getLineColor: isLine
+            ? [...rgb, alpha] as [number, number, number, number]
+            : [...hexToRgb(layer.style.strokeColor ?? "#ffffff"), alpha] as [number, number, number, number],
           getLineWidth: layer.style.lineWidth,
           lineWidthUnits: "pixels",
           updateTriggers: {
@@ -103,15 +181,21 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
             getLineColor: [layer.style.color, layer.style.strokeColor, layer.style.opacity],
           },
           onClick: (info: any) => {
+            // In draw mode, let the transparent overlay handle clicks
+            if (drawLayer) return;
             if (info.object) {
-              setSelectedPoint(info.object);
-              setIsDialogOpen(true);
+              const deckLayerId: string = info.layer?.id ?? "";
+              const mapLayerId = deckLayerId.replace(/^layer-/, "");
+              const mapLayer = layers.find((l) => l.id === mapLayerId) ?? null;
+              if (mapLayer) {
+                setSelection({ feature: info.object, layer: mapLayer });
+                setIsPropsOpen(true);
+              }
             }
           },
         });
       });
-    // layers last = top of visual stack in deck.gl
-  }, [layers]);
+  }, [layers, drawLayer]);
 
   const onLoad = React.useCallback(() => {
     const map = mapRef.current?.getMap();
@@ -123,6 +207,48 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
   React.useEffect(() => {
     overlay.setProps({ layers: deckLayers });
   }, [overlay, deckLayers]);
+
+  function handleEditClick() {
+    if (!selection) return;
+    const coords = selection.feature.geometry?.coordinates;
+    const lng = Array.isArray(coords) ? coords[0] : 0;
+    const lat = Array.isArray(coords) ? coords[1] : 0;
+    setRowFormState({
+      mode: "edit",
+      layer: selection.layer,
+      lng,
+      lat,
+      initialProps: selection.feature.properties ?? {},
+    });
+    setIsPropsOpen(false);
+  }
+
+  async function handleDeleteClick() {
+    if (!selection) return;
+    if (!deleteConfirming) {
+      setDeleteConfirming(true);
+      return;
+    }
+    const id = selection.feature.properties?.id;
+    if (id == null) return;
+    setDeleteLoading(true);
+    try {
+      await fetch("/api/pg/rows", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dsn: selection.layer.dsn,
+          schema: selection.layer.table.table_schema,
+          table: selection.layer.table.table_name,
+          id,
+        }),
+      });
+      onLayerDataChanged?.(selection.layer.id);
+      setIsPropsOpen(false);
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
 
   return (
     <>
@@ -140,6 +266,33 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
         mapStyle={BASEMAPS[basemap].style as any}
       />
 
+      <GeocoderControl
+        onSelect={(lng, lat, zoom) => {
+          mapRef.current?.getMap().flyTo({ center: [lng, lat], zoom });
+        }}
+      />
+
+      {/* Draw mode banner */}
+      {drawLayer && (
+        <>
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 rounded-full border bg-background/95 px-4 py-2 shadow-md backdrop-blur-sm text-sm pointer-events-auto">
+            <span className="text-muted-foreground">
+              Click to place a point in{" "}
+              <span className="font-mono font-medium text-foreground">
+                {drawLayer.table.table_name}
+              </span>
+            </span>
+            <button
+              className="text-xs text-muted-foreground hover:text-foreground underline"
+              onClick={(e) => { e.stopPropagation(); onCancelDraw?.(); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Basemap picker */}
       <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
         {showBasemapPicker && (
           <div className="flex flex-col rounded-md border bg-background/95 shadow-sm backdrop-blur-sm overflow-hidden mb-1">
@@ -164,26 +317,89 @@ export default function MaplibreMap({ layers }: { layers: MapLayer[] }) {
         </button>
       </div>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      {/* Feature properties dialog */}
+      <Dialog open={isPropsOpen} onOpenChange={setIsPropsOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Feature Properties</DialogTitle>
-            <DialogDescription>Attributes for the selected feature</DialogDescription>
+            <DialogDescription>
+              {selection
+                ? `${selection.layer.table.table_schema}.${selection.layer.table.table_name}`
+                : "Attributes for the selected feature"}
+            </DialogDescription>
           </DialogHeader>
-          {selectedPoint && (
-            <ScrollArea className="max-h-[60vh] mt-2">
-              <div className="space-y-0">
-                {Object.entries(selectedPoint.properties || {}).map(([key, value]) => (
-                  <div key={key} className="flex items-start justify-between gap-4 py-2 border-b last:border-0">
-                    <span className="text-sm font-medium capitalize shrink-0">{key.replace(/_/g, " ")}</span>
-                    <span className="text-sm text-muted-foreground text-right break-all">{String(value)}</span>
+          {selection && (
+            <>
+              <ScrollArea className="max-h-[50vh] mt-2">
+                <div className="space-y-0">
+                  {Object.entries(selection.feature.properties || {}).map(([key, value]) => (
+                    <div key={key} className="flex items-start justify-between gap-4 py-2 border-b last:border-0">
+                      <span className="text-sm font-medium capitalize shrink-0">{key.replace(/_/g, " ")}</span>
+                      <span className="text-sm text-muted-foreground text-right break-all">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+
+              {/* Edit / Delete — only show if table has an id column */}
+              {selection.feature.properties?.id != null && (
+                <div className="flex items-center justify-between pt-3 border-t mt-2">
+                  <div className="flex gap-2">
+                    {deleteConfirming ? (
+                      <>
+                        <span className="text-xs text-destructive self-center">Delete this row?</span>
+                        <Button
+                          size="sm" variant="destructive"
+                          className="h-7 text-xs"
+                          onClick={handleDeleteClick}
+                          disabled={deleteLoading}
+                        >
+                          {deleteLoading ? "Deleting…" : "Confirm"}
+                        </Button>
+                        <Button
+                          size="sm" variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => setDeleteConfirming(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="sm" variant="outline"
+                        className="h-7 text-xs text-destructive hover:text-destructive"
+                        onClick={handleDeleteClick}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </div>
-                ))}
-              </div>
-            </ScrollArea>
+                  <Button size="sm" className="h-7 text-xs" onClick={handleEditClick}>
+                    Edit
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Row insert / edit form */}
+      {rowFormState && (
+        <RowFormDialog
+          mode={rowFormState.mode}
+          layer={rowFormState.layer}
+          lng={rowFormState.lng}
+          lat={rowFormState.lat}
+          initialProps={rowFormState.initialProps}
+          open={true}
+          onClose={() => setRowFormState(null)}
+          onSaved={(layerId) => {
+            onLayerDataChanged?.(layerId);
+            setRowFormState(null);
+          }}
+        />
+      )}
     </>
   );
 }
