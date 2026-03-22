@@ -3,45 +3,23 @@ import Image from "next/image";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Button } from "@/components/ui/button";
 
-const features = [
-  {
-    title: "Browse your spatial tables",
-    description: "Every geometry and geography column in your database is discovered automatically and grouped by schema. One click adds it to the map.",
-  },
-  {
-    title: "Style by geometry type",
-    description: "Points, lines, and polygons each get relevant controls. Scale point radius by any numeric column for instant choropleth-style visualization.",
-  },
-  {
-    title: "Filter without writing SQL",
-    description: "Apply column filters directly from the layer panel using standard operators — equals, greater than, LIKE, IS NULL, and more.",
-  },
-  {
-    title: "No infrastructure required",
-    description: "Tiles are generated on-demand from your database using PostGIS's native ST_AsMVT. No tile server, no cache, no extra services to run.",
-  },
-  {
-    title: "Multiple basemaps",
-    description: "Switch between Liberty, Bright, Positron, and satellite imagery. All free, no API keys required.",
-  },
-  {
-    title: "Inspect any feature",
-    description: "Click a feature on the map to view all of its properties in a clean panel.",
-  },
-];
 
 const faqs = [
   {
     q: "Is it safe to enter my database connection string?",
-    a: "Your connection string is stored only in your browser's localStorage — it never leaves your device except to reach your own database. When you load a layer, your browser sends the DSN to the Next.js API route, which opens a connection to your database, fetches the tile, and immediately discards the DSN. Nothing is logged or persisted server-side. You can verify this by reading the source code.",
+    a: "Your connection string is stored only in your browser's localStorage — it never leaves your device except to reach your own database. When you perform any operation, your browser sends the DSN to the Next.js API route, which opens a connection, executes the query, and immediately discards the DSN. Nothing is logged or persisted server-side. You can verify this by reading the source code.",
   },
   {
     q: "Should I use my admin credentials?",
-    a: "No. We recommend creating a dedicated read-only PostgreSQL user with access only to the schemas you want to explore. This limits exposure even in the unlikely event something goes wrong.",
+    a: "It depends on what you need to do. For read-only exploration, a dedicated user with SELECT access is safest. For full workflow use — importing files, editing rows, managing tables — you'll need a user with the appropriate write permissions on the schemas you're working in.",
+  },
+  {
+    q: "Can it modify or delete my data?",
+    a: "Yes. This is a full read-write tool. You can insert, edit, and delete rows, create and drop tables, and import data directly into your database. Make sure the PostgreSQL user you connect with has only the permissions you intend to grant.",
   },
   {
     q: "Does this work with cloud databases like Neon, Supabase, or RDS?",
-    a: "Yes — any PostgreSQL database with the PostGIS extension enabled works. Just make sure your database accepts connections from Vercel's IP ranges (or wherever you're hosting the app).",
+    a: "Yes — any PostgreSQL database with the PostGIS extension enabled works, including Neon, Supabase, AWS RDS, and self-hosted instances. Since this app is deployed on Vercel, your database needs to accept connections from Vercel's outbound IP ranges. Most managed providers let you allowlist IPs in their network settings, or you can set your database to accept all connections and rely on credential security.",
   },
   {
     q: "What PostGIS version do I need?",
@@ -49,7 +27,7 @@ const faqs = [
   },
   {
     q: "Is there a row limit?",
-    a: "No hard limit is enforced — tiles are clipped and simplified by PostGIS for the current viewport, so large tables remain usable at low zoom levels. Performance depends on your database hardware and whether your geometry column is indexed.",
+    a: "No hard limit is enforced — tiles are clipped and simplified by PostGIS for the current viewport, so large tables remain usable at low zoom levels. Performance depends on your database hardware and whether your geometry column has a spatial index.",
   },
 ];
 
@@ -83,7 +61,7 @@ export default function LandingPage() {
           The Interface PostGIS Deserves
         </h1>
         <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
-            Query, visualize, and explore your spatial data — without leaving your database workflow. Open source, purpose-built for the world's most powerful GIS database.
+          Connect database, manage tables, import files (.shp, .geojson, .gpkg), scrape feature servers, visualize and filter spatial data, and share live map views—all in the browser.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3">
           <Button asChild size="lg">
@@ -97,63 +75,50 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Audience */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <p className="text-center text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-10">Built for energy industry professionals</p>
-          <div className="grid sm:grid-cols-3 gap-8 text-center">
+      {/* Workflows */}
+      <section className="border-t">
+        <div className="mx-auto max-w-5xl px-6 py-20">
+          <h2 className="text-2xl font-bold tracking-tight text-center mb-4">Supported workflows</h2>
+          <p className="text-center text-muted-foreground text-sm mb-14 max-w-xl mx-auto">Everything you'd reach for a desktop GIS or a collection of scripts — available directly in your browser, connected live to your database.</p>
+          <div className="grid sm:grid-cols-2 gap-10">
             {[
               {
-                title: "Analysts",
-                body: "Quickly explore and QA spatial datasets — substations, pipelines, sites, and assets — without writing a line of SQL.",
+                step: "01",
+                title: "Connect your database",
+                body: "Paste a PostgreSQL connection string and your spatial tables appear instantly, grouped by schema. Your DSN stays in the browser — nothing is logged or stored server-side.",
               },
               {
-                title: "Business Developers",
-                body: "Visualize opportunity maps, service territories, and project footprints to support siting decisions and partnership conversations.",
+                step: "02",
+                title: "Import spatial files",
+                body: "Load shapefiles (.shp), GeoJSON, GeoPackage (.gpkg), and more directly into PostGIS — choose target schema, set the SRID, and more.",
               },
               {
-                title: "Project Developers",
-                body: "Track project portfolios on a live map, filter by status or region, and manage point data directly from the browser.",
+                step: "03",
+                title: "Scrape feature servers",
+                body: "Pull data from ArcGIS Feature Services and other REST endpoints directly into PostGIS. No manual exports, no intermediate files.",
               },
-            ].map(({ title, body }) => (
-              <div key={title} className="flex flex-col items-center">
-                <h3 className="font-semibold mb-2">{title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section className="mx-auto max-w-5xl px-6 py-20">
-        <h2 className="text-2xl font-bold tracking-tight text-center mb-12">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-8 text-center">
-          {[
-            { step: "1", title: "Connect", body: "Paste your PostgreSQL connection string. It stays in your browser — nothing is stored on any server." },
-            { step: "2", title: "Browse", body: "Your spatial tables are discovered automatically. Click any table to add it to the map as a layer." },
-            { step: "3", title: "Explore", body: "Style layers, apply filters, scale points by data values, and click features to inspect their properties." },
-          ].map(({ step, title, body }) => (
-            <div key={step} className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm mb-4">
-                {step}
-              </div>
-              <h3 className="font-semibold mb-2">{title}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-5xl px-6 py-20">
-          <h2 className="text-2xl font-bold tracking-tight text-center mb-12">Everything you need to explore spatial data</h2>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
-            {features.map((f) => (
-              <div key={f.title}>
-                <h3 className="font-semibold mb-2">{f.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{f.description}</p>
+              {
+                step: "04",
+                title: "Manage tables and data",
+                body: "Edit and visualize your data, convert SRIDs, add primary keys, apply a spatial index, insert and delete rows, rename tables, and more.",
+              },
+              {
+                step: "05",
+                title: "Visualize and filter",
+                body: "Style by color, opacity, and stroke. Scale point size or line width by any numeric column. Classify fills by category. Filter by any attribute — no SQL required.",
+              },
+              {
+                step: "06",
+                title: "Share live map views",
+                body: "Generate a read-only link to your current map. Stakeholders get a live, styled view of your data — no credentials, no desktop GIS required.",
+              },
+            ].map(({ step, title, body }) => (
+              <div key={step} className="flex gap-5">
+                <span className="text-2xl font-bold text-muted-foreground/30 tabular-nums shrink-0 leading-tight">{step}</span>
+                <div>
+                  <h3 className="font-semibold mb-1.5">{title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
+                </div>
               </div>
             ))}
           </div>
