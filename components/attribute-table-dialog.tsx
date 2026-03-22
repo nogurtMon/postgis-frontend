@@ -6,7 +6,34 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronUp, ChevronDown, Search, Plus, Trash2, X, Loader2 } from "lucide-react";
+import { ChevronUp, ChevronDown, Search, Plus, Trash2, X, Loader2, Filter } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+
+type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with";
+
+interface AttrFilter {
+  id: string;
+  column: string;
+  operator: AttrOperator;
+  value: string;
+}
+
+const OPERATOR_LABELS: Record<AttrOperator, string> = {
+  ilike: "contains",
+  eq: "equals",
+  neq: "not equals",
+  gt: "greater than",
+  lt: "less than",
+  gte: "≥",
+  lte: "≤",
+  is_null: "is null",
+  is_not_null: "is not null",
+  starts_with: "starts with",
+};
+const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
+const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];
 
 interface ColumnMeta {
   name: string;
@@ -47,6 +74,10 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
   const [deleting, setDeleting] = React.useState(false);
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
 
+  // Filter toolbar
+  const [attrFilters, setAttrFilters] = React.useState<AttrFilter[]>([]);
+  const [showFilters, setShowFilters] = React.useState(false);
+
   // Add row form
   const [addingRow, setAddingRow] = React.useState(false);
   const [newRowValues, setNewRowValues] = React.useState<Record<string, string>>({});
@@ -69,11 +100,13 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
     sc?: string | null;
     sd?: "asc" | "desc";
     s?: string;
+    af?: AttrFilter[];
   } = {}) {
     const p = opts.p ?? page;
     const sc = "sc" in opts ? opts.sc : sortCol;
     const sd = opts.sd ?? sortDir;
     const s = "s" in opts ? opts.s : search;
+    const af = "af" in opts ? opts.af : attrFilters;
 
     setLoading(true);
     setError(null);
@@ -81,7 +114,7 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
       const res = await fetch("/api/pg/table-rows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table, page: p, pageSize: PAGE_SIZE, sortCol: sc, sortDir: sd, search: s }),
+        body: JSON.stringify({ dsn, schema, table, page: p, pageSize: PAGE_SIZE, sortCol: sc, sortDir: sd, search: s, attrFilters: af }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -102,11 +135,13 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
     setSortDir("asc");
     setSearch("");
     setSearchInput("");
+    setAttrFilters([]);
+    setShowFilters(false);
     setSelected(new Set());
     setEditCell(null);
     setAddingRow(false);
     setDeleteError(null);
-    fetchRows({ p: 0, sc: null, sd: "asc", s: "" });
+    fetchRows({ p: 0, sc: null, sd: "asc", s: "", af: [] });
   }, [open, schema, table]);
 
   React.useEffect(() => {
@@ -228,6 +263,35 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
     }
   }
 
+  function addAttrFilter() {
+    const firstCol = editableCols[0]?.name ?? "";
+    setAttrFilters((prev) => [...prev, { id: crypto.randomUUID(), column: firstCol, operator: "ilike", value: "" }]);
+    setShowFilters(true);
+  }
+
+  function removeAttrFilter(id: string) {
+    const next = attrFilters.filter((f) => f.id !== id);
+    setAttrFilters(next);
+    setPage(0);
+    fetchRows({ p: 0, af: next });
+  }
+
+  function applyAttrFilter(next: AttrFilter[]) {
+    setAttrFilters(next);
+    setPage(0);
+    fetchRows({ p: 0, af: next });
+  }
+
+  function clearAttrFilters() {
+    setAttrFilters([]);
+    setPage(0);
+    fetchRows({ p: 0, af: [] });
+  }
+
+  const activeFilterCount = attrFilters.filter(
+    (f) => f.column && (NULL_OPERATORS.includes(f.operator) || f.value.trim() !== "")
+  ).length;
+
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r._ctid));
   const pageCount = Math.ceil(total / PAGE_SIZE);
   const rowStart = page * PAGE_SIZE + 1;
@@ -266,6 +330,20 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
                   </Button>
                 )}
               </form>
+              <Button
+                size="sm"
+                variant={showFilters || activeFilterCount > 0 ? "secondary" : "ghost"}
+                className="h-7 text-xs gap-1"
+                onClick={() => { setShowFilters((v) => !v); if (!showFilters && attrFilters.length === 0) addAttrFilter(); }}
+              >
+                <Filter className="h-3 w-3" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="ml-0.5 rounded-full bg-primary text-primary-foreground px-1.5 text-[10px] leading-4">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </Button>
               {selected.size > 0 && (
                 <Button
                   size="sm" variant="destructive" className="h-7 text-xs"
@@ -282,6 +360,69 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
           </div>
           {deleteError && <p className="text-xs text-destructive mt-1">{deleteError}</p>}
         </DialogHeader>
+
+        {/* Filter panel */}
+        {showFilters && (
+          <div className="shrink-0 border-b bg-muted/10 px-4 py-2 flex flex-wrap items-center gap-2">
+            {attrFilters.map((f, i) => (
+              <div key={f.id} className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={() => removeAttrFilter(f.id)}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+                <span className="text-xs text-muted-foreground shrink-0">{i === 0 ? "where" : "and"}</span>
+                <Select
+                  value={f.column}
+                  onValueChange={(col) => applyAttrFilter(attrFilters.map((fi) => fi.id === f.id ? { ...fi, column: col, value: "" } : fi))}
+                >
+                  <SelectTrigger className="h-7 text-xs w-36 font-mono">
+                    <SelectValue placeholder="column" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {editableCols.map((c) => (
+                      <SelectItem key={c.name} value={c.name} className="text-xs font-mono">{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={f.operator}
+                  onValueChange={(op) => applyAttrFilter(attrFilters.map((fi) => fi.id === f.id ? { ...fi, operator: op as AttrOperator } : fi))}
+                >
+                  <SelectTrigger className="h-7 text-xs w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ALL_OPERATORS.map((op) => (
+                      <SelectItem key={op} value={op} className="text-xs">{OPERATOR_LABELS[op]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!NULL_OPERATORS.includes(f.operator) && (
+                  <Input
+                    value={f.value}
+                    placeholder="value"
+                    onChange={(e) => setAttrFilters((prev) => prev.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
+                    onBlur={(e) => applyAttrFilter(attrFilters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") applyAttrFilter(attrFilters.map((fi) => fi.id === f.id ? { ...fi, value: (e.target as HTMLInputElement).value } : fi));
+                    }}
+                    className="h-7 text-xs w-40"
+                  />
+                )}
+              </div>
+            ))}
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={addAttrFilter}>
+              <Plus className="h-3 w-3 mr-1" /> Add filter
+            </Button>
+            {attrFilters.length > 0 && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" onClick={clearAttrFilters}>
+                Clear filters
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Add row form */}
         {addingRow && (

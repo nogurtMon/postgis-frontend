@@ -55,8 +55,19 @@ export async function GET(
   const x = parseInt(xs, 10);
   const y = parseInt(ys, 10);
 
-  // Parse filters: encoded as filters=[{col,op,val},...] JSON
-  let filters: { column: string; operator: string; value: string }[] = [];
+  // Parse filters JSON
+  type TileFilter = {
+    column: string;
+    mode: string;
+    values?: string[];
+    textValue?: string;
+    operator?: string;
+    value?: string;
+    min?: string;
+    max?: string;
+    isNull?: boolean;
+  };
+  let filters: TileFilter[] = [];
   const filtersParam = searchParams.get("filters");
   if (filtersParam) {
     try { filters = JSON.parse(filtersParam); } catch {}
@@ -74,11 +85,46 @@ export async function GET(
 
     for (const f of filters) {
       if (!isValidColName(f.column)) continue;
-      if (f.operator === "IS NULL" || f.operator === "IS NOT NULL") {
-        filterClauses.push(`${qi(f.column)} ${f.operator}`);
-      } else {
-        queryParams.push(f.value);
-        filterClauses.push(`${qi(f.column)} ${f.operator} $${queryParams.length}`);
+      const col = qi(f.column);
+      switch (f.mode) {
+        case "in": {
+          if (!f.values?.length) break;
+          // Cast both sides to text so this works for boolean, numeric, etc.
+          const placeholders = f.values.map((v) => {
+            queryParams.push(v);
+            return `$${queryParams.length}`;
+          });
+          filterClauses.push(`${col}::text = ANY(ARRAY[${placeholders.join(",")}]::text[])`);
+          break;
+        }
+        case "text": {
+          const tv = f.textValue?.trim();
+          if (!tv) break;
+          queryParams.push(`%${tv}%`);
+          filterClauses.push(`${col}::text ILIKE $${queryParams.length}`);
+          break;
+        }
+        case "comparison": {
+          const SAFE_OPS = new Set(["=", "!=", "<>", ">", "<", ">=", "<="]);
+          if (!f.operator || !SAFE_OPS.has(f.operator) || f.value == null || f.value === "") break;
+          queryParams.push(f.value);
+          filterClauses.push(`${col} ${f.operator} $${queryParams.length}`);
+          break;
+        }
+        case "range": {
+          if (f.min != null && f.min !== "") {
+            queryParams.push(f.min);
+            filterClauses.push(`${col} >= $${queryParams.length}`);
+          }
+          if (f.max != null && f.max !== "") {
+            queryParams.push(f.max);
+            filterClauses.push(`${col} <= $${queryParams.length}`);
+          }
+          break;
+        }
+        case "null_check":
+          filterClauses.push(`${col} ${f.isNull ? "IS NULL" : "IS NOT NULL"}`);
+          break;
       }
     }
 

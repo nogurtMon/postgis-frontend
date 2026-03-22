@@ -7,6 +7,7 @@ import { TableSidebar } from "@/components/table-sidebar";
 import { useDsn } from "@/hooks/use-dsn";
 import { LAYER_COLORS, DEFAULT_STYLE } from "@/lib/types";
 import type { TableRow, MapLayer } from "@/lib/types";
+import type { ZoomTarget } from "@/components/maplibre-map";
 
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
@@ -35,6 +36,25 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
+  const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
+
+  async function zoomToLayer(layer: MapLayer) {
+    try {
+      const res = await fetch("/api/pg/extent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dsn: layer.dsn,
+          schema: layer.table.table_schema,
+          table: layer.table.table_name,
+          geomCol: layer.table.geom_col,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) return;
+      setZoomTarget({ bounds: [[data.xmin, data.ymin], [data.xmax, data.ymax]] });
+    } catch {}
+  }
 
   // Load layers once on mount — read DSN directly from localStorage so there's
   // no timing dependency on the useDsn state being populated yet.
@@ -139,6 +159,7 @@ export default function Home() {
           drawLayerId={drawLayer?.id ?? null}
           onStartDraw={setDrawLayer}
           onStopDraw={() => setDrawLayer(null)}
+          onZoomToLayer={zoomToLayer}
         />
         <div className="flex-1 relative">
           <MaplibreMap
@@ -146,6 +167,7 @@ export default function Home() {
             drawLayer={drawLayer}
             onCancelDraw={() => setDrawLayer(null)}
             onLayerDataChanged={onLayerDataChanged}
+            flyTo={zoomTarget}
           />
         </div>
       </div>

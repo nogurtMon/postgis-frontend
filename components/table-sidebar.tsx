@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import type { TableRow, MapLayer, LayerFilter, FilterOperator, RadiusScale } from "@/lib/types";
+import type { TableRow, MapLayer, LayerFilter, FilterMode, RadiusScale } from "@/lib/types";
 import { CreateTableDialog } from "@/components/create-table-dialog";
 import { DeleteTableDialog } from "@/components/delete-table-dialog";
 import { RenameTableDialog } from "@/components/rename-table-dialog";
@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/select";
 import {
   ChevronDown, ChevronRight, Eye, EyeOff, ChevronUp, ChevronDown as ChevronDownIcon, X, Plus,
-  Check, MapPin, TriangleAlert, MoreHorizontal,
+  Check, MapPin, TriangleAlert, MoreHorizontal, Maximize2,
 } from "lucide-react";
 
 interface Props {
@@ -33,9 +33,39 @@ interface Props {
   drawLayerId?: string | null;
   onStartDraw?: (layer: MapLayer) => void;
   onStopDraw?: () => void;
+  onZoomToLayer?: (layer: MapLayer) => void;
 }
 
-const OPERATORS: FilterOperator[] = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "IS NULL", "IS NOT NULL"];
+// ─── filter helpers ──────────────────────────────────────────────────────────
+
+const NUMERIC_TYPES = new Set([
+  "integer", "bigint", "smallint", "numeric", "real", "double precision", "money",
+]);
+const DATE_TYPES = new Set([
+  "date", "time without time zone", "time with time zone",
+  "timestamp without time zone", "timestamp with time zone",
+]);
+
+type ColMeta = { dataType: string; values: string[]; truncated: boolean };
+
+function inferMode(dataType: string, truncated: boolean): FilterMode {
+  if (dataType === "boolean") return "in";
+  if (NUMERIC_TYPES.has(dataType)) return "range";
+  if (DATE_TYPES.has(dataType)) return "comparison";
+  return truncated ? "text" : "in";
+}
+
+function availableModes(dataType: string, truncated: boolean): FilterMode[] {
+  if (dataType === "boolean") return ["in", "null_check"];
+  if (NUMERIC_TYPES.has(dataType)) return ["range", "comparison", "null_check"];
+  if (DATE_TYPES.has(dataType)) return ["comparison", "null_check"];
+  // text: show "in" only when cardinality is low enough
+  return truncated ? ["text", "comparison", "null_check"] : ["in", "text", "comparison", "null_check"];
+}
+
+const MODE_LABELS: Record<FilterMode, string> = {
+  in: "list", text: "contains", comparison: "compare", range: "range", null_check: "null",
+};
 
 function RadiusScaleEditor({
   layer, dsn, onUpdateLayer,
@@ -195,11 +225,12 @@ function LayerFilterEditor({
 }) {
   const [draft, setDraft] = React.useState<LayerFilter[]>(layer.filters);
   const [columns, setColumns] = React.useState<{ name: string; dataType: string }[]>([]);
-  const [dirty, setDirty] = React.useState(false);
+  // Per-column meta cache: name → { dataType, values, truncated }
+  const [colMeta, setColMeta] = React.useState<Record<string, ColMeta>>({});
+  const [loadingCol, setLoadingCol] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setDraft(layer.filters);
-    setDirty(false);
   }, [layer.id]);
 
   React.useEffect(() => {
@@ -214,82 +245,241 @@ function LayerFilterEditor({
       .catch(() => {});
   }, [dsn, layer.table.table_schema, layer.table.table_name]);
 
+  async function fetchColMeta(col: string): Promise<ColMeta | null> {
+    if (colMeta[col]) return colMeta[col];
+    setLoadingCol(col);
+    try {
+      const res = await fetch("/api/pg/column-values", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dsn, schema: layer.table.table_schema, table: layer.table.table_name, column: col }),
+      });
+      const data = await res.json();
+      if (data.error) return null;
+      const meta: ColMeta = { dataType: data.dataType, values: data.values, truncated: data.truncated };
+      setColMeta((prev) => ({ ...prev, [col]: meta }));
+      return meta;
+    } catch { return null; }
+    finally { setLoadingCol(null); }
+  }
+
+  async function handleColumnChange(filterId: string, col: string) {
+    if (!col) {
+      const newDraft = draft.map((f) => (f.id === filterId ? { ...f, column: "" } : f));
+      setDraft(newDraft);
+      return;
+    }
+    const meta = await fetchColMeta(col);
+    const mode = meta ? inferMode(meta.dataType, meta.truncated) : "text";
+    const newDraft = draft.map((f) =>
+      f.id === filterId
+        ? { id: f.id, column: col, mode, values: [], textValue: "", operator: "=", value: "", min: "", max: "", isNull: false }
+        : f
+    );
+    setDraft(newDraft);
+    onUpdateLayer(layer.id, { filters: newDraft });
+  }
+
   function updateDraft(filterId: string, patch: Partial<LayerFilter>) {
     setDraft((prev) => prev.map((f) => (f.id === filterId ? { ...f, ...patch } : f)));
-    setDirty(true);
+  }
+
+  // "in" mode auto-applies on every checkbox change
+  function handleCheckbox(filterId: string, val: string, checked: boolean) {
+    const newDraft = draft.map((f) => {
+      if (f.id !== filterId) return f;
+      const vals = f.values ?? [];
+      return { ...f, values: checked ? [...vals, val] : vals.filter((v) => v !== val) };
+    });
+    setDraft(newDraft);
+    onUpdateLayer(layer.id, { filters: newDraft });
   }
 
   function addFilter() {
-    setDraft((prev) => [...prev, { id: crypto.randomUUID(), column: "", operator: "=", value: "" }]);
-    setDirty(true);
+    setDraft((prev) => [...prev, { id: crypto.randomUUID(), column: "", mode: "text" as FilterMode }]);
   }
 
   function removeFilter(filterId: string) {
-    setDraft((prev) => prev.filter((f) => f.id !== filterId));
-    setDirty(true);
+    const next = draft.filter((f) => f.id !== filterId);
+    setDraft(next);
+    onUpdateLayer(layer.id, { filters: next });
   }
 
-  function apply() {
-    onUpdateLayer(layer.id, { filters: draft });
-    setDirty(false);
-  }
-
-  const listId = `cols-${layer.id}`;
+  const nonGeomCols = columns.filter((c) => c.dataType !== "USER-DEFINED");
 
   return (
     <div className="space-y-2">
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</p>
 
-      {columns.length > 0 && (
-        <datalist id={listId}>
-          {columns.map((c) => <option key={c.name} value={c.name} />)}
-        </datalist>
-      )}
+      {draft.map((f) => {
+        const meta = colMeta[f.column];
+        const modes = meta ? availableModes(meta.dataType, meta.truncated) : [];
 
-      {draft.map((f) => (
-        <div key={f.id} className="space-y-1.5 rounded-md border bg-background p-2">
-          <div className="flex gap-1.5 items-center">
-            <Input
-              list={listId}
-              placeholder="column"
-              value={f.column}
-              onChange={(e) => updateDraft(f.id, { column: e.target.value })}
-              className="h-7 text-xs"
-            />
-            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => removeFilter(f.id)}>
-              <X className="h-3 w-3" />
-            </Button>
-          </div>
-          <div className="flex gap-1.5">
-            <Select value={f.operator} onValueChange={(v) => updateDraft(f.id, { operator: v as FilterOperator })}>
-              <SelectTrigger className="h-7 text-xs w-32 shrink-0">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {OPERATORS.map((op) => <SelectItem key={op} value={op} className="text-xs">{op}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {f.operator !== "IS NULL" && f.operator !== "IS NOT NULL" && (
+        return (
+          <div key={f.id} className="rounded-md border bg-background p-2 space-y-1.5">
+            {/* Column selector + remove */}
+            <div className="flex gap-1.5 items-center">
+              <Select
+                value={f.column}
+                onValueChange={(col) => handleColumnChange(f.id, col)}
+              >
+                <SelectTrigger className="h-7 text-xs flex-1">
+                  <SelectValue placeholder="Select column…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {nonGeomCols.map((c) => (
+                    <SelectItem key={c.name} value={c.name} className="text-xs font-mono">{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="icon" variant="ghost"
+                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={() => removeFilter(f.id)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+
+            {/* Loading indicator */}
+            {loadingCol === f.column && (
+              <p className="text-[10px] text-muted-foreground">Loading values…</p>
+            )}
+
+            {/* Mode pills */}
+            {f.column && modes.length > 1 && (
+              <div className="flex gap-1 flex-wrap">
+                {modes.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => updateDraft(f.id, { mode: m })}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                      f.mode === m
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "text-muted-foreground border-border hover:border-foreground"
+                    }`}
+                  >
+                    {MODE_LABELS[m]}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Filter controls */}
+            {f.column && f.mode === "in" && meta && (
+              <div className="max-h-40 overflow-y-auto space-y-0.5 border rounded p-1.5 bg-muted/30">
+                {meta.values.length === 0 && (
+                  <p className="text-[10px] text-muted-foreground px-1">No values found</p>
+                )}
+                {meta.values.map((v) => {
+                  const label = meta.dataType === "boolean"
+                    ? (v === "true" || v === "t" ? "True" : "False")
+                    : v;
+                  return (
+                    <label key={v} className="flex items-center gap-1.5 cursor-pointer hover:bg-muted rounded px-1 py-0.5">
+                      <input
+                        type="checkbox"
+                        className="h-3 w-3 shrink-0"
+                        checked={f.values?.includes(v) ?? false}
+                        onChange={(e) => handleCheckbox(f.id, v, e.target.checked)}
+                      />
+                      <span className="text-xs truncate">{label}</span>
+                    </label>
+                  );
+                })}
+                {meta.truncated && (
+                  <p className="text-[10px] text-muted-foreground px-1 pt-0.5 border-t">
+                    Showing top {meta.values.length} values
+                  </p>
+                )}
+              </div>
+            )}
+
+            {f.column && f.mode === "text" && (
               <Input
-                placeholder="value"
-                value={f.value}
-                onChange={(e) => updateDraft(f.id, { value: e.target.value })}
+                placeholder="contains…"
+                value={f.textValue ?? ""}
+                onChange={(e) => updateDraft(f.id, { textValue: e.target.value })}
+                onBlur={() => onUpdateLayer(layer.id, { filters: draft })}
+                onKeyDown={(e) => { if (e.key === "Enter") onUpdateLayer(layer.id, { filters: draft }); }}
                 className="h-7 text-xs"
               />
             )}
-          </div>
-        </div>
-      ))}
 
-      <div className="flex items-center justify-between">
+            {f.column && f.mode === "comparison" && (
+              <div className="flex gap-1.5">
+                <Select
+                  value={f.operator ?? "="}
+                  onValueChange={(v) => updateDraft(f.id, { operator: v })}
+                >
+                  <SelectTrigger className="h-7 text-xs w-16 shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["=", "!=", ">", "<", ">=", "<="].map((op) => (
+                      <SelectItem key={op} value={op} className="text-xs font-mono">{op}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder="value"
+                  value={f.value ?? ""}
+                  onChange={(e) => updateDraft(f.id, { value: e.target.value })}
+                  onBlur={() => onUpdateLayer(layer.id, { filters: draft })}
+                  onKeyDown={(e) => { if (e.key === "Enter") onUpdateLayer(layer.id, { filters: draft }); }}
+                  className="h-7 text-xs"
+                />
+              </div>
+            )}
+
+            {f.column && f.mode === "range" && (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  placeholder="min"
+                  value={f.min ?? ""}
+                  onChange={(e) => updateDraft(f.id, { min: e.target.value })}
+                  onBlur={() => onUpdateLayer(layer.id, { filters: draft })}
+                  onKeyDown={(e) => { if (e.key === "Enter") onUpdateLayer(layer.id, { filters: draft }); }}
+                  className="h-7 text-xs"
+                />
+                <span className="text-[10px] text-muted-foreground shrink-0">–</span>
+                <Input
+                  placeholder="max"
+                  value={f.max ?? ""}
+                  onChange={(e) => updateDraft(f.id, { max: e.target.value })}
+                  onBlur={() => onUpdateLayer(layer.id, { filters: draft })}
+                  onKeyDown={(e) => { if (e.key === "Enter") onUpdateLayer(layer.id, { filters: draft }); }}
+                  className="h-7 text-xs"
+                />
+              </div>
+            )}
+
+            {f.column && f.mode === "null_check" && (
+              <Select
+                value={f.isNull ? "null" : "not_null"}
+                onValueChange={(v) => {
+                  const newDraft = draft.map((fi) => fi.id === f.id ? { ...fi, isNull: v === "null" } : fi);
+                  setDraft(newDraft);
+                  onUpdateLayer(layer.id, { filters: newDraft });
+                }}
+              >
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="not_null" className="text-xs">IS NOT NULL</SelectItem>
+                  <SelectItem value="null" className="text-xs">IS NULL</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="flex items-center">
         <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={addFilter}>
           <Plus className="h-3 w-3 mr-1" /> Add filter
         </Button>
-        {dirty && (
-          <Button size="sm" className="h-7 text-xs px-3" onClick={apply}>
-            Apply
-          </Button>
-        )}
       </div>
     </div>
   );
@@ -298,7 +488,7 @@ function LayerFilterEditor({
 export function TableSidebar({
   dsn, layers,
   onAddLayer, onRemoveLayer, onUpdateLayer, onMoveLayer,
-  drawLayerId, onStartDraw, onStopDraw,
+  drawLayerId, onStartDraw, onStopDraw, onZoomToLayer,
 }: Props) {
   const [tab, setTab] = React.useState("tables");
   const [tables, setTables] = React.useState<TableRow[]>([]);
@@ -325,6 +515,12 @@ export function TableSidebar({
   const [creatingIdx, setCreatingIdx] = React.useState<string | null>(null);
   const [idxLoading, setIdxLoading] = React.useState(false);
   const [idxError, setIdxError] = React.useState<string | null>(null);
+
+  const [castingGeom, setCastingGeom] = React.useState<string | null>(null);
+  const [castType, setCastType] = React.useState("LineString");
+  const [castSrid, setCastSrid] = React.useState("4326");
+  const [castLoading, setCastLoading] = React.useState(false);
+  const [castError, setCastError] = React.useState<string | null>(null);
 
   async function handleAssignSrid(t: TableRow) {
     setAssignLoading(true);
@@ -468,11 +664,13 @@ export function TableSidebar({
                   const isAssigning = assigningSrid === key;
                   const isFixingPk = fixingPk === key;
                   const isCreatingIdx = creatingIdx === key;
+                  const isCastingGeom = castingGeom === key;
+                  const isGenericGeom = t.geom_type === "GEOMETRY" || t.geom_type === "GEOGRAPHY";
                   return (
                     <div key={key} className="border-b">
                       <div className="flex items-center px-3 py-1.5 gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="max-w-44 text-sm truncate">{t.table_name}</p>
+                          <p className="max-w-44 text-sm truncate" title={t.table_name}>{t.table_name}</p>
                           <div className="flex flex-row gap-2 items-center">
                             <p className="text-[10px] text-muted-foreground">{t.geom_type}</p>
                             {t.row_count != null && (
@@ -497,7 +695,7 @@ export function TableSidebar({
                               <p className="text-[10px] text-muted-foreground">SRID {t.srid}</p>
                             )}
                           </div>
-                          {(t.has_pk === false || t.has_spatial_index === false) && (
+                          {(t.has_pk === false || t.has_spatial_index === false || isGenericGeom) && (
                             <div className="flex flex-row gap-1.5 items-center mt-0.5">
                               {t.has_pk === false && (
                                 <button
@@ -515,6 +713,19 @@ export function TableSidebar({
                                   onClick={() => { setCreatingIdx(isCreatingIdx ? null : key); setIdxError(null); }}
                                 >
                                   no index
+                                </button>
+                              )}
+                              {isGenericGeom && (
+                                <button
+                                  className="text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 border border-violet-400 dark:border-violet-600 rounded px-1 leading-4 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+                                  title="Geometry type is unspecified — click to cast the column type in the database"
+                                  onClick={() => {
+                                    setCastingGeom(isCastingGeom ? null : key);
+                                    setCastSrid(String(t.srid ?? 4326));
+                                    setCastError(null);
+                                  }}
+                                >
+                                  type unknown
                                 </button>
                               )}
                             </div>
@@ -667,6 +878,70 @@ export function TableSidebar({
                           {idxError && <p className="text-[10px] text-destructive break-words">{idxError}</p>}
                         </div>
                       )}
+
+                      {isCastingGeom && (
+                        <div className="px-3 pb-2 space-y-1.5 bg-violet-50/50 dark:bg-violet-950/20 border-t">
+                          <p className="text-[10px] text-muted-foreground pt-1.5">
+                            Casts the geometry column to a specific type. All existing rows must already be of that geometry type or the operation will fail.
+                          </p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <Select value={castType} onValueChange={setCastType}>
+                              <SelectTrigger className="h-7 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Point","MultiPoint","LineString","MultiLineString","Polygon","MultiPolygon","GeometryCollection"].map((gt) => (
+                                  <SelectItem key={gt} value={gt} className="text-xs">{gt}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              value={castSrid}
+                              onChange={(e) => setCastSrid(e.target.value)}
+                              className="h-7 text-xs font-mono"
+                              placeholder="SRID e.g. 4326"
+                            />
+                          </div>
+                          <div className="flex gap-1.5 items-center">
+                            <Button
+                              size="sm" className="h-7 text-xs"
+                              disabled={castLoading}
+                              onClick={async () => {
+                                setCastLoading(true);
+                                setCastError(null);
+                                try {
+                                  const res = await fetch("/api/pg/cast-geometry-type", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      dsn,
+                                      schema: t.table_schema,
+                                      table: t.table_name,
+                                      geomCol: t.geom_col,
+                                      newType: castType,
+                                      srid: castSrid,
+                                    }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok) throw new Error(data.error);
+                                  setCastingGeom(null);
+                                  setRefreshKey((k) => k + 1);
+                                } catch (e: any) {
+                                  setCastError(e.message);
+                                } finally {
+                                  setCastLoading(false);
+                                }
+                              }}
+                            >
+                              {castLoading ? "Casting…" : "Cast type"}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setCastingGeom(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                          {castError && <p className="text-[10px] text-destructive break-words">{castError}</p>}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -687,21 +962,27 @@ export function TableSidebar({
             const isExpanded = expandedLayer === layer.id;
             const isTop = uiIdx === 0;
             const isBottom = uiIdx === layers.length - 1;
+            const rowGeomType = (layer.geomTypeOverride ?? layer.table.geom_type ?? "").toLowerCase();
+            const rowIsLine = rowGeomType.includes("linestring");
 
             return (
               <div key={layer.id} className="border-b">
                 {/* Layer row */}
                 <div className="flex items-center gap-1 px-2 py-1.5">
-                  <label className="shrink-0 cursor-pointer" title="Change color">
+                  <label className="shrink-0 cursor-pointer" title={rowIsLine ? "Change line color" : "Change fill color"}>
                     <span
                       className="block w-4 h-4 rounded border border-border"
-                      style={{ backgroundColor: layer.style.color }}
+                      style={{ backgroundColor: rowIsLine ? layer.style.strokeColor : layer.style.color }}
                     />
                     <input
                       type="color"
                       className="sr-only"
-                      value={layer.style.color}
-                      onChange={(e) => onUpdateLayer(layer.id, { style: { ...layer.style, color: e.target.value } })}
+                      value={rowIsLine ? layer.style.strokeColor : layer.style.color}
+                      onChange={(e) => onUpdateLayer(layer.id, {
+                        style: rowIsLine
+                          ? { ...layer.style, strokeColor: e.target.value }
+                          : { ...layer.style, color: e.target.value },
+                      })}
                     />
                   </label>
 
@@ -755,12 +1036,12 @@ export function TableSidebar({
 
                 {/* Expanded panel */}
                 {isExpanded && (() => {
-                  const gt = layer.table.geom_type?.toLowerCase() ?? "";
+                  const gt = (layer.geomTypeOverride ?? layer.table.geom_type ?? "").toLowerCase();
                   const isLine = gt.includes("linestring");
                   const isPoly = gt.includes("polygon");
                   const isPoint = !isLine && !isPoly; // points + unknown GEOMETRY/GEOGRAPHY
 
-                  function slider(label: string, key: keyof Pick<typeof layer.style, "opacity" | "radius" | "lineWidth">, min: number, max: number, step: number, fmt: (v: number) => string) {
+                  function slider(label: string, key: keyof Pick<typeof layer.style, "opacity" | "strokeOpacity" | "radius" | "lineWidth">, min: number, max: number, step: number, fmt: (v: number) => string) {
                     return (
                       <div key={key} className="grid grid-cols-[3.5rem_1fr_2.5rem] items-center gap-2">
                         <Label className="text-xs text-muted-foreground">{label}</Label>
@@ -778,26 +1059,76 @@ export function TableSidebar({
                       <div className="space-y-3">
                         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Style</p>
 
-                        {slider("Opacity", "opacity", 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`)}
+                        {/* Geometry type override — shown when table column is generic GEOMETRY/GEOGRAPHY */}
+                        {(layer.table.geom_type === "GEOMETRY" || layer.table.geom_type === "GEOGRAPHY") && (
+                          <div className="grid grid-cols-[3.5rem_1fr] items-center gap-2">
+                            <Label className="text-xs text-muted-foreground">Type</Label>
+                            <Select
+                              value={layer.geomTypeOverride ?? ""}
+                              onValueChange={(v) => onUpdateLayer(layer.id, { geomTypeOverride: v || null })}
+                            >
+                              <SelectTrigger className={`h-7 text-xs ${!layer.geomTypeOverride ? "border-amber-400 dark:border-amber-600" : ""}`}>
+                                <SelectValue placeholder="Select type…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Point","MultiPoint","LineString","MultiLineString","Polygon","MultiPolygon"].map((t) => (
+                                  <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {isLine
+                          ? slider("Opacity", "strokeOpacity", 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`)
+                          : slider(isPoly ? "Fill" : "Opacity", "opacity", 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`)
+                        }
 
                         {isPoint && !layer.style.radiusScale &&
                           slider("Radius", "radius", 1, 30, 1, (v) => `${v}px`)}
 
-                        {slider(isLine ? "Width" : "Stroke", "lineWidth", 0, 10, 0.5, (v) => `${v}px`)}
+                        {slider(isLine ? "Width" : "Stroke W", "lineWidth", 0, 10, 0.5, (v) => `${v}px`)}
 
-                        {/* Stroke/outline color — points and polygons only */}
+                        {/* Stroke/outline color + opacity — points and polygons only */}
                         {!isLine && (
+                          <>
+                            <div className="grid grid-cols-[3.5rem_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Outline</Label>
+                              <label className="cursor-pointer flex items-center gap-1.5" title="Change outline color">
+                                <span className="block w-4 h-4 rounded border border-border shrink-0"
+                                  style={{ backgroundColor: layer.style.strokeColor ?? "#ffffff" }} />
+                                <span className="text-xs text-muted-foreground">{layer.style.strokeColor ?? "#ffffff"}</span>
+                                <input type="color" className="sr-only"
+                                  value={layer.style.strokeColor ?? "#ffffff"}
+                                  onChange={(e) => onUpdateLayer(layer.id, { style: { ...layer.style, strokeColor: e.target.value } })}
+                                />
+                              </label>
+                            </div>
+                            {slider("Outline %", "strokeOpacity", 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`)}
+                          </>
+                        )}
+
+                        {/* Dash pattern — line layers only */}
+                        {isLine && (
                           <div className="grid grid-cols-[3.5rem_1fr] items-center gap-2">
-                            <Label className="text-xs text-muted-foreground">Outline</Label>
-                            <label className="cursor-pointer flex items-center gap-1.5" title="Change outline color">
-                              <span className="block w-4 h-4 rounded border border-border shrink-0"
-                                style={{ backgroundColor: layer.style.strokeColor ?? "#ffffff" }} />
-                              <span className="text-xs text-muted-foreground">{layer.style.strokeColor ?? "#ffffff"}</span>
-                              <input type="color" className="sr-only"
-                                value={layer.style.strokeColor ?? "#ffffff"}
-                                onChange={(e) => onUpdateLayer(layer.id, { style: { ...layer.style, strokeColor: e.target.value } })}
-                              />
-                            </label>
+                            <Label className="text-xs text-muted-foreground">Pattern</Label>
+                            <Select
+                              value={layer.style.dashArray ? JSON.stringify(layer.style.dashArray) : "solid"}
+                              onValueChange={(v) => {
+                                const dashArray = v === "solid" ? null : JSON.parse(v) as number[];
+                                onUpdateLayer(layer.id, { style: { ...layer.style, dashArray } });
+                              }}
+                            >
+                              <SelectTrigger className="h-7 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="solid" className="text-xs">Solid</SelectItem>
+                                <SelectItem value="[8,4]" className="text-xs">Dashed</SelectItem>
+                                <SelectItem value="[2,4]" className="text-xs">Dotted</SelectItem>
+                                <SelectItem value="[12,4,2,4]" className="text-xs">Dash-dot</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                         )}
                       </div>
@@ -807,6 +1138,18 @@ export function TableSidebar({
                       )}
 
                       <LayerFilterEditor layer={layer} dsn={dsn} onUpdateLayer={onUpdateLayer} />
+
+                      {onZoomToLayer && (
+                        <div className="pt-1">
+                          <Button
+                            size="sm" variant="outline"
+                            className="h-7 text-xs w-full"
+                            onClick={() => onZoomToLayer(layer)}
+                          >
+                            <Maximize2 className="h-3 w-3 mr-1" /> Zoom to extent
+                          </Button>
+                        </div>
+                      )}
 
                       {isPoint && onStartDraw && (
                         <div className="pt-1">

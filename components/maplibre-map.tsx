@@ -4,6 +4,7 @@ import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { MVTLayer } from "@deck.gl/geo-layers";
+import { PathStyleExtension } from "@deck.gl/extensions";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -26,13 +27,20 @@ function buildTileUrl(layer: MapLayer): string {
     geomCol: layer.table.geom_col ?? "geom",
     srid: String(layer.table.srid ?? 4326),
   });
-  const validFilters = layer.filters.filter((f) => f.column.trim());
+  const validFilters = layer.filters.filter((f) => {
+    if (!f.column || !f.mode) return false;
+    switch (f.mode) {
+      case "in":          return (f.values?.length ?? 0) > 0;
+      case "text":        return (f.textValue?.trim()?.length ?? 0) > 0;
+      case "comparison":  return !!f.operator && (f.value ?? "") !== "";
+      case "range":       return (f.min ?? "") !== "" || (f.max ?? "") !== "";
+      case "null_check":  return true;
+      default:            return false;
+    }
+  });
   if (validFilters.length > 0) {
-    params.set("filters", JSON.stringify(validFilters.map((f) => ({
-      column: f.column,
-      operator: f.operator,
-      value: f.value,
-    }))));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    params.set("filters", JSON.stringify(validFilters.map(({ id, ...rest }) => rest)));
   }
   if (layer.dataVersion !== undefined) {
     params.set("v", String(layer.dataVersion));
@@ -75,14 +83,17 @@ interface RowFormState {
   initialProps?: Record<string, any>;
 }
 
+export type ZoomTarget = { bounds: [[number, number], [number, number]] };
+
 interface Props {
   layers: MapLayer[];
   drawLayer?: MapLayer | null;
   onCancelDraw?: () => void;
   onLayerDataChanged?: (layerId: string) => void;
+  flyTo?: ZoomTarget | null;
 }
 
-export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDataChanged }: Props) {
+export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDataChanged, flyTo }: Props) {
   const mapRef = React.useRef<any>(null);
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [isPropsOpen, setIsPropsOpen] = React.useState(false);
@@ -93,6 +104,13 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
   const [showBasemapPicker, setShowBasemapPicker] = React.useState(false);
 
   const overlay = React.useMemo(() => new MapboxOverlay({ interleaved: false }), []);
+
+  // Fly to bounds when zoomTarget changes
+  React.useEffect(() => {
+    if (!flyTo) return;
+    const map = mapRef.current?.getMap();
+    if (map) map.fitBounds(flyTo.bounds, { padding: 60, maxZoom: 18 });
+  }, [flyTo]);
 
   // Cancel draw mode on Escape
   React.useEffect(() => {
@@ -145,11 +163,14 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
     return layers
       .filter((l) => l.visible && l.table.geom_col)
       .map((layer) => {
-        const rgb = hexToRgb(layer.style.color);
-        const alpha = Math.round(layer.style.opacity * 255);
+        const fillRgb = hexToRgb(layer.style.color);
+        const strokeRgb = hexToRgb(layer.style.strokeColor ?? "#ffffff");
+        const fillAlpha = Math.round(layer.style.opacity * 255);
+        const strokeAlpha = Math.round((layer.style.strokeOpacity ?? 1) * 255);
         const tileUrl = buildTileUrl(layer);
-        const geomType = layer.table.geom_type?.toLowerCase() ?? "";
+        const geomType = (layer.geomTypeOverride ?? layer.table.geom_type ?? "").toLowerCase();
         const isLine = geomType.includes("linestring");
+        const hasDash = isLine && !!layer.style.dashArray;
 
         return new MVTLayer({
           id: `layer-${layer.id}`,
@@ -170,16 +191,25 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
               }
             : layer.style.radius,
           pointRadiusUnits: "pixels",
-          getFillColor: [...rgb, alpha] as [number, number, number, number],
-          getLineColor: isLine
-            ? [...rgb, alpha] as [number, number, number, number]
-            : [...hexToRgb(layer.style.strokeColor ?? "#ffffff"), alpha] as [number, number, number, number],
+          getFillColor: [...fillRgb, fillAlpha] as [number, number, number, number],
+          // strokeColor drives both line color (lines) and outline color (points/polygons)
+          getLineColor: [...strokeRgb, strokeAlpha] as [number, number, number, number],
           getLineWidth: layer.style.lineWidth,
           lineWidthUnits: "pixels",
+          ...(hasDash ? {
+            _subLayerProps: {
+              "line-strings": {
+                extensions: [new PathStyleExtension({ dash: true })],
+                getDashArray: layer.style.dashArray,
+                dashJustified: true,
+              },
+            },
+          } : {}),
           updateTriggers: {
             getPointRadius: [layer.style.radius, layer.style.radiusScale],
             getFillColor: [layer.style.color, layer.style.opacity],
-            getLineColor: [layer.style.color, layer.style.strokeColor, layer.style.opacity],
+            getLineColor: [layer.style.strokeColor, layer.style.strokeOpacity],
+            _subLayerProps: [layer.style.dashArray],
           },
           onClick: (info: any) => {
             // In draw mode, let the transparent overlay handle clicks

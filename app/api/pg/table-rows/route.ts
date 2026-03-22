@@ -16,6 +16,10 @@ const TEXT_TYPES = new Set([
   "text", "character varying", "character", "name", "citext", "varchar",
 ]);
 
+// Max characters to show per geometry cell — prevents huge response bodies for
+// tables with complex geometries (e.g. transmission line MultiLineStrings).
+const GEOM_DISPLAY_LIMIT = 300;
+
 // POST — query / browse rows (pagination, sort, search)
 export async function POST(req: NextRequest) {
   const {
@@ -23,6 +27,7 @@ export async function POST(req: NextRequest) {
     page = 0, pageSize = 100,
     sortCol, sortDir = "asc",
     search,
+    attrFilters = [],
   } = await req.json();
 
   if (!dsn?.startsWith("postgres"))
@@ -31,8 +36,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid schema or table" }, { status: 400 });
 
   const pool = getPool(dsn);
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const colRes = await client.query(
       `SELECT column_name, udt_name, data_type
        FROM information_schema.columns
@@ -56,18 +62,19 @@ export async function POST(req: NextRequest) {
         : null;
     const validDir = sortDir === "desc" ? "DESC" : "ASC";
 
-    // ctid is the row identity; geometry cols shown as WKT
+    // ctid is the row identity; geometry cols shown as truncated WKT
     const selectParts = [
       "ctid::text AS _ctid",
       ...columns.map((c) =>
         c.isGeom
-          ? `ST_AsText(${ident(c.name)}) AS ${ident(c.name)}`
+          ? `left(ST_AsText(${ident(c.name)}), ${GEOM_DISPLAY_LIMIT}) AS ${ident(c.name)}`
           : ident(c.name)
       ),
     ];
 
     const params: any[] = [];
-    let whereClause = "";
+    const whereClauses: string[] = [];
+
     if (search?.trim()) {
       const textCols = columns.filter(
         (c) => !c.isGeom && TEXT_TYPES.has(c.dataType)
@@ -77,9 +84,54 @@ export async function POST(req: NextRequest) {
           params.push(`%${search.trim()}%`);
           return `${ident(c.name)} ILIKE $${params.length}`;
         });
-        whereClause = `WHERE (${conditions.join(" OR ")})`;
+        whereClauses.push(`(${conditions.join(" OR ")})`);
       }
     }
+
+    const SAFE_OPS = new Set(["=", "!=", ">", "<", ">=", "<="]);
+    const validColumnNames = new Set(columns.map((c) => c.name));
+    for (const f of attrFilters as { column: string; operator: string; value: string }[]) {
+      if (!f.column || !validColumnNames.has(f.column) || !VALID_IDENT.test(f.column)) continue;
+      const col = ident(f.column);
+      switch (f.operator) {
+        case "ilike":
+          if (!f.value?.trim()) break;
+          params.push(`%${f.value.trim()}%`);
+          whereClauses.push(`${col}::text ILIKE $${params.length}`);
+          break;
+        case "starts_with":
+          if (!f.value?.trim()) break;
+          params.push(`${f.value.trim()}%`);
+          whereClauses.push(`${col}::text ILIKE $${params.length}`);
+          break;
+        case "eq":
+          if (f.value == null || f.value === "") break;
+          params.push(f.value);
+          whereClauses.push(`${col}::text = $${params.length}`);
+          break;
+        case "neq":
+          if (f.value == null || f.value === "") break;
+          params.push(f.value);
+          whereClauses.push(`${col}::text != $${params.length}`);
+          break;
+        case "gt": case "lt": case "gte": case "lte": {
+          if (f.value == null || f.value === "") break;
+          const sqlOp = { gt: ">", lt: "<", gte: ">=", lte: "<=" }[f.operator];
+          if (!SAFE_OPS.has(sqlOp!)) break;
+          params.push(f.value);
+          whereClauses.push(`${col} ${sqlOp} $${params.length}`);
+          break;
+        }
+        case "is_null":
+          whereClauses.push(`${col} IS NULL`);
+          break;
+        case "is_not_null":
+          whereClauses.push(`${col} IS NOT NULL`);
+          break;
+      }
+    }
+
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     const countRes = await client.query(
       `SELECT COUNT(*) FROM ${ident(schema, table)} ${whereClause}`,
@@ -105,7 +157,7 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
-    client.release();
+    client?.release();
   }
 }
 
@@ -121,8 +173,9 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Invalid ctid" }, { status: 400 });
 
   const pool = getPool(dsn);
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query(
       `UPDATE ${ident(schema, table)} SET ${ident(column)} = $1 WHERE ctid = $2::tid`,
       [value === "" ? null : value, ctid]
@@ -131,7 +184,7 @@ export async function PATCH(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
-    client.release();
+    client?.release();
   }
 }
 
@@ -147,8 +200,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ deleted: 0 });
 
   const pool = getPool(dsn);
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const result = await client.query(
       `DELETE FROM ${ident(schema, table)} WHERE ctid = ANY($1::tid[])`,
       [ctids]
@@ -157,7 +211,7 @@ export async function DELETE(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
-    client.release();
+    client?.release();
   }
 }
 
@@ -175,8 +229,9 @@ export async function PUT(req: NextRequest) {
   );
 
   const pool = getPool(dsn);
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     if (entries.length === 0) {
       await client.query(`INSERT INTO ${ident(schema, table)} DEFAULT VALUES`);
     } else {
@@ -192,6 +247,6 @@ export async function PUT(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
-    client.release();
+    client?.release();
   }
 }
