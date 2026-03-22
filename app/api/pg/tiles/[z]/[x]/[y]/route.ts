@@ -56,17 +56,7 @@ export async function GET(
   const y = parseInt(ys, 10);
 
   // Parse filters JSON
-  type TileFilter = {
-    column: string;
-    mode: string;
-    values?: string[];
-    textValue?: string;
-    operator?: string;
-    value?: string;
-    min?: string;
-    max?: string;
-    isNull?: boolean;
-  };
+  type TileFilter = { column: string; operator: string; value: string };
   let filters: TileFilter[] = [];
   const filtersParam = searchParams.get("filters");
   if (filtersParam) {
@@ -83,48 +73,53 @@ export async function GET(
     const queryParams: any[] = [table, z, x, y];
     const filterClauses: string[] = [];
 
+    const SAFE_OPS = new Set(["=", "!=", ">", "<", ">=", "<="]);
     for (const f of filters) {
       if (!isValidColName(f.column)) continue;
       const col = qi(f.column);
-      switch (f.mode) {
-        case "in": {
-          if (!f.values?.length) break;
-          // Cast both sides to text so this works for boolean, numeric, etc.
-          const placeholders = f.values.map((v) => {
-            queryParams.push(v);
-            return `$${queryParams.length}`;
-          });
-          filterClauses.push(`${col}::text = ANY(ARRAY[${placeholders.join(",")}]::text[])`);
-          break;
-        }
-        case "text": {
-          const tv = f.textValue?.trim();
-          if (!tv) break;
-          queryParams.push(`%${tv}%`);
+      switch (f.operator) {
+        case "ilike":
+          if (!f.value?.trim()) break;
+          queryParams.push(`%${f.value.trim()}%`);
           filterClauses.push(`${col}::text ILIKE $${queryParams.length}`);
           break;
-        }
-        case "comparison": {
-          const SAFE_OPS = new Set(["=", "!=", "<>", ">", "<", ">=", "<="]);
-          if (!f.operator || !SAFE_OPS.has(f.operator) || f.value == null || f.value === "") break;
+        case "starts_with":
+          if (!f.value?.trim()) break;
+          queryParams.push(`${f.value.trim()}%`);
+          filterClauses.push(`${col}::text ILIKE $${queryParams.length}`);
+          break;
+        case "eq":
+          if (!f.value && f.value !== "0") break;
           queryParams.push(f.value);
-          filterClauses.push(`${col} ${f.operator} $${queryParams.length}`);
+          filterClauses.push(`${col}::text = $${queryParams.length}`);
+          break;
+        case "neq":
+          if (!f.value && f.value !== "0") break;
+          queryParams.push(f.value);
+          filterClauses.push(`${col}::text != $${queryParams.length}`);
+          break;
+        case "gt": case "lt": case "gte": case "lte": {
+          if (!f.value && f.value !== "0") break;
+          const sqlOp = { gt: ">", lt: "<", gte: ">=", lte: "<=" }[f.operator];
+          if (!SAFE_OPS.has(sqlOp!)) break;
+          queryParams.push(f.value);
+          filterClauses.push(`${col} ${sqlOp} $${queryParams.length}`);
           break;
         }
-        case "range": {
-          if (f.min != null && f.min !== "") {
-            queryParams.push(f.min);
-            filterClauses.push(`${col} >= $${queryParams.length}`);
-          }
-          if (f.max != null && f.max !== "") {
-            queryParams.push(f.max);
-            filterClauses.push(`${col} <= $${queryParams.length}`);
-          }
+        case "is_null":
+          filterClauses.push(`${col} IS NULL`);
+          break;
+        case "is_not_null":
+          filterClauses.push(`${col} IS NOT NULL`);
+          break;
+        case "in": {
+          if (!f.value?.trim()) break;
+          const vals = f.value.split(",").map((v) => v.trim()).filter(Boolean);
+          if (vals.length === 0) break;
+          const placeholders = vals.map((v) => { queryParams.push(v); return `$${queryParams.length}`; }).join(", ");
+          filterClauses.push(`${col}::text IN (${placeholders})`);
           break;
         }
-        case "null_check":
-          filterClauses.push(`${col} ${f.isNull ? "IS NULL" : "IS NOT NULL"}`);
-          break;
       }
     }
 

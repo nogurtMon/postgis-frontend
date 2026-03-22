@@ -128,6 +128,14 @@ export async function POST(req: NextRequest) {
         case "is_not_null":
           whereClauses.push(`${col} IS NOT NULL`);
           break;
+        case "in": {
+          if (f.value == null || f.value === "") break;
+          const vals = f.value.split(",").map((v: string) => v.trim()).filter(Boolean);
+          if (vals.length === 0) break;
+          const placeholders = vals.map((v: string) => { params.push(v); return `$${params.length}`; }).join(", ");
+          whereClauses.push(`${col}::text IN (${placeholders})`);
+          break;
+        }
       }
     }
 

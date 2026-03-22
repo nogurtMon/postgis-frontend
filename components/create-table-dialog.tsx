@@ -198,13 +198,14 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   dsn: string;
   onCreated: () => void;
+  defaultSchema?: string;
 }
 
-export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props) {
+export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultSchema }: Props) {
   const [activeTab, setActiveTab] = React.useState("blank");
 
   // ---- Blank table state ----
-  const [schema, setSchema] = React.useState("public");
+  const [schema, setSchema] = React.useState(defaultSchema ?? "public");
   const [tableName, setTableName] = React.useState("");
   const [geomType, setGeomType] = React.useState("Point");
   const [srid, setSrid] = React.useState("4326");
@@ -212,6 +213,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated }: Props)
   const [timestamps, setTimestamps] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (open && defaultSchema) setSchema(defaultSchema);
+  }, [open, defaultSchema]);
 
   // ---- GeoPackage state ----
   const [gpkgPhase, setGpkgPhase] = React.useState<GpkgPhase>("idle");

@@ -6,15 +6,23 @@ import { SettingsDialog } from "@/components/settings-dialog";
 import { TableSidebar } from "@/components/table-sidebar";
 import { useDsn } from "@/hooks/use-dsn";
 import { LAYER_COLORS, DEFAULT_STYLE } from "@/lib/types";
-import type { TableRow, MapLayer } from "@/lib/types";
+import type { TableRow, MapLayer, BasemapDef } from "@/lib/types";
 import type { ZoomTarget } from "@/components/maplibre-map";
 
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 
+function dbLabel(dsn: string) {
+  try {
+    const url = new URL(dsn);
+    return `${url.hostname}${url.pathname}`;
+  } catch { return dsn.slice(0, 40); }
+}
+
 const LAYERS_KEY = "postgis-layers";
 const DSN_LS_KEY = "pg_dsn"; // must match the key used in use-dsn.ts
+const CUSTOM_BASEMAPS_KEY = "postgis-custom-basemaps";
 
 function loadLayers(dsn: string): MapLayer[] {
   try {
@@ -31,12 +39,19 @@ function saveLayers(dsn: string, layers: MapLayer[]) {
   } catch {}
 }
 
+function loadCustomBasemaps(): BasemapDef[] {
+  try { return JSON.parse(localStorage.getItem(CUSTOM_BASEMAPS_KEY) ?? "[]"); }
+  catch { return []; }
+}
+
 export default function Home() {
   const { dsn, setDsn, loaded } = useDsn();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
+  const [basemap, setBasemap] = React.useState("");
+  const [customBasemaps, setCustomBasemaps] = React.useState<BasemapDef[]>(() => loadCustomBasemaps());
 
   async function zoomToLayer(layer: MapLayer) {
     try {
@@ -111,40 +126,60 @@ export default function Home() {
     );
   }
 
-  function moveLayer(id: string, dir: "up" | "down") {
-    setLayers((prev) => {
-      const i = prev.findIndex((l) => l.id === id);
-      if (i < 0) return prev;
-      const next = [...prev];
-      const swapIdx = dir === "up" ? i + 1 : i - 1;
-      if (swapIdx < 0 || swapIdx >= next.length) return prev;
-      [next[i], next[swapIdx]] = [next[swapIdx], next[i]];
+  function reorderLayers(newOrder: string[]) {
+    setLayers((prev) => newOrder.map((id) => prev.find((l) => l.id === id)!).filter(Boolean));
+  }
+
+  function addCustomBasemap(b: BasemapDef) {
+    setCustomBasemaps((prev) => {
+      const next = [...prev, b];
+      localStorage.setItem(CUSTOM_BASEMAPS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function removeCustomBasemap(key: string) {
+    setCustomBasemaps((prev) => {
+      const next = prev.filter((b) => b.key !== key);
+      localStorage.setItem(CUSTOM_BASEMAPS_KEY, JSON.stringify(next));
+      if (basemap === key) setBasemap("");
       return next;
     });
   }
 
   return (
-    <div className="font-sans h-screen overflow-hidden grid grid-rows-[auto_1fr]">
-      <header className="bg-background shadow-sm px-4 py-2 border-b">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2 w-40">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-slate-400"}`} />
-            <span className="text-xs text-muted-foreground">{dsn ? "Connected" : "Not connected"}</span>
-          </div>
+    <div className="h-screen overflow-hidden grid grid-rows-[auto_1fr]">
+      <header className="bg-background border-b px-3 py-1 flex items-center justify-between gap-4 text-[11px] font-mono shrink-0">
+        {/* Brand */}
+        <span className="flex items-center gap-1.5 font-bold tracking-widest text-primary uppercase text-xs shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/favicon.ico" alt="" className="w-4 h-4 shrink-0" />
+          PostGIS-Frontend
+        </span>
 
-          <h1 className="text-lg font-semibold tracking-tight">PostGIS Frontend</h1>
+        {/* Connection status — click to open settings */}
+        <button
+          className="flex items-center gap-1.5 min-w-0 hover:text-foreground text-muted-foreground transition-colors"
+          onClick={() => setSettingsOpen(true)}
+          title="Connection settings"
+        >
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-500"}`} />
+          <span className="truncate max-w-xs">
+            {dsn ? dbLabel(dsn) : "NOT CONNECTED"}
+          </span>
+        </button>
 
-          <div className="flex justify-end w-40">
-            <ModeToggle />
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => setSettingsOpen(true)}
-              title="Connection settings"
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
-          </div>
+        {/* Right actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          {layers.length > 0 && (
+            <span className="text-muted-foreground tabular-nums">
+              {layers.length} {layers.length === 1 ? "LAYER" : "LAYERS"}
+            </span>
+          )}
+          <ModeToggle />
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSettingsOpen(true)} title="Connection settings">
+            <Settings className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </header>
 
@@ -155,11 +190,17 @@ export default function Home() {
           onAddLayer={addLayer}
           onRemoveLayer={removeLayer}
           onUpdateLayer={updateLayer}
-          onMoveLayer={moveLayer}
+          onReorderLayers={reorderLayers}
           drawLayerId={drawLayer?.id ?? null}
           onStartDraw={setDrawLayer}
           onStopDraw={() => setDrawLayer(null)}
           onZoomToLayer={zoomToLayer}
+          onOpenSettings={() => setSettingsOpen(true)}
+          basemap={basemap}
+          onBasemapChange={setBasemap}
+          customBasemaps={customBasemaps}
+          onAddCustomBasemap={addCustomBasemap}
+          onRemoveCustomBasemap={removeCustomBasemap}
         />
         <div className="flex-1 relative">
           <MaplibreMap
@@ -167,7 +208,8 @@ export default function Home() {
             drawLayer={drawLayer}
             onCancelDraw={() => setDrawLayer(null)}
             onLayerDataChanged={onLayerDataChanged}
-            flyTo={zoomTarget}
+            basemap={basemap}
+            customBasemaps={customBasemaps}
           />
         </div>
       </div>

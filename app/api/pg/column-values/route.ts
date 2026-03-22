@@ -13,7 +13,7 @@ function getPool(dsn: string) {
 
 // If a column has more than this many distinct values, the UI switches from
 // multi-select to a text-contains input.
-const DISTINCT_LIMIT = 50;
+const DISTINCT_LIMIT = 100;
 
 export async function POST(req: NextRequest) {
   const { dsn, schema, table, column } = await req.json();

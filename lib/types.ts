@@ -9,19 +9,21 @@ export interface TableRow {
   has_spatial_index?: boolean | null;
 }
 
-export type FilterMode = "in" | "text" | "comparison" | "range" | "null_check";
+export type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in";
 
-export interface LayerFilter {
+export interface ValueScale {
+  column: string;
+  minValue: number;
+  maxValue: number;
+  minOutput: number;
+  maxOutput: number;
+}
+
+export interface AttrFilter {
   id: string;
   column: string;
-  mode: FilterMode;
-  values?: string[];    // "in":          col = ANY(values)
-  textValue?: string;  // "text":        col ILIKE '%textValue%'
-  operator?: string;   // "comparison":  col {op} value
-  value?: string;      // "comparison"
-  min?: string;        // "range":       col >= min AND col <= max
-  max?: string;        // "range"
-  isNull?: boolean;    // "null_check":  IS NULL (true) / IS NOT NULL (false)
+  operator: AttrOperator;
+  value: string;
 }
 
 export interface RadiusScale {
@@ -32,6 +34,17 @@ export interface RadiusScale {
   maxRadius: number;
 }
 
+export interface FillColorRule {
+  value: string;
+  color: string; // hex
+}
+
+export interface CategoricalFill {
+  column: string;
+  rules: FillColorRule[];
+  defaultColor: string; // hex fallback
+}
+
 export interface LayerStyle {
   color: string;         // hex — fill for points/polygons, line color for linestrings
   strokeColor: string;   // hex — outline for points/polygons (unused for linestrings)
@@ -39,8 +52,12 @@ export interface LayerStyle {
   strokeOpacity: number; // 0–1, outline opacity for points/polygons (unused for lines)
   radius: number;        // px, for point layers (used when radiusScale is null)
   lineWidth: number;     // px, stroke width for all types
-  dashArray: number[] | null; // line dash pattern e.g. [8,4]; null = solid
   radiusScale: RadiusScale | null;
+  lineWidthScale: ValueScale | null;
+  opacityScale: ValueScale | null;
+  strokeOpacityScale: ValueScale | null;
+  categoricalFill: CategoricalFill | null;
+  categoricalStroke: CategoricalFill | null;
 }
 
 export interface MapLayer {
@@ -49,10 +66,23 @@ export interface MapLayer {
   dsn: string;
   visible: boolean;
   style: LayerStyle;
-  filters: LayerFilter[];
+  filters: AttrFilter[];
   dataVersion?: number;
   geomTypeOverride?: string | null; // user-set override when table's geom_type is generic
 }
+
+export interface BasemapDef {
+  key: string;
+  label: string;
+  url: string; // XYZ tile URL template, e.g. https://.../{z}/{x}/{y}.png
+}
+
+export const BASEMAP_OPTIONS: { key: string; label: string }[] = [
+  { key: "liberty",   label: "Liberty"   },
+  { key: "bright",    label: "Bright"    },
+  { key: "positron",  label: "Positron"  },
+  { key: "satellite", label: "Satellite" },
+];
 
 export const LAYER_COLORS = [
   "#3b82f6", "#ef4444", "#10b981", "#f59e0b",
@@ -66,6 +96,10 @@ export const DEFAULT_STYLE: LayerStyle = {
   strokeOpacity: 1.0,
   radius: 6,
   lineWidth: 2,
-  dashArray: null,
   radiusScale: null,
+  lineWidthScale: null,
+  opacityScale: null,
+  categoricalFill: null,
+  categoricalStroke: null,
+  strokeOpacityScale: null,
 };

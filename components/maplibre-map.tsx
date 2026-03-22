@@ -4,7 +4,6 @@ import Map from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { MVTLayer } from "@deck.gl/geo-layers";
-import { PathStyleExtension } from "@deck.gl/extensions";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -28,15 +27,9 @@ function buildTileUrl(layer: MapLayer): string {
     srid: String(layer.table.srid ?? 4326),
   });
   const validFilters = layer.filters.filter((f) => {
-    if (!f.column || !f.mode) return false;
-    switch (f.mode) {
-      case "in":          return (f.values?.length ?? 0) > 0;
-      case "text":        return (f.textValue?.trim()?.length ?? 0) > 0;
-      case "comparison":  return !!f.operator && (f.value ?? "") !== "";
-      case "range":       return (f.min ?? "") !== "" || (f.max ?? "") !== "";
-      case "null_check":  return true;
-      default:            return false;
-    }
+    if (!f.column || !f.operator) return false;
+    if (f.operator === "is_null" || f.operator === "is_not_null") return true;
+    return (f.value ?? "").trim() !== "";
   });
   if (validFilters.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -85,23 +78,44 @@ interface RowFormState {
 
 export type ZoomTarget = { bounds: [[number, number], [number, number]] };
 
+function buildXYZStyle(url: string) {
+  return {
+    version: 8 as const,
+    sources: { "xyz": { type: "raster" as const, tiles: [url], tileSize: 256 } },
+    layers: [{ id: "xyz", type: "raster" as const, source: "xyz" }],
+  };
+}
+
 interface Props {
   layers: MapLayer[];
   drawLayer?: MapLayer | null;
   onCancelDraw?: () => void;
   onLayerDataChanged?: (layerId: string) => void;
   flyTo?: ZoomTarget | null;
+  basemap?: string;
+  customBasemaps?: import("@/lib/types").BasemapDef[];
 }
 
-export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDataChanged, flyTo }: Props) {
+export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDataChanged, flyTo, basemap: basemapProp, customBasemaps = [] }: Props) {
   const mapRef = React.useRef<any>(null);
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [isPropsOpen, setIsPropsOpen] = React.useState(false);
   const [deleteConfirming, setDeleteConfirming] = React.useState(false);
   const [deleteLoading, setDeleteLoading] = React.useState(false);
   const [rowFormState, setRowFormState] = React.useState<RowFormState | null>(null);
-  const [basemap, setBasemap] = React.useState<BasemapKey>("liberty");
-  const [showBasemapPicker, setShowBasemapPicker] = React.useState(false);
+  const basemap = basemapProp ?? "";
+
+  const BLANK_STYLE = { version: 8 as const, sources: {}, layers: [], glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf" };
+
+  function resolveBasemapStyle() {
+    if (!basemap) return BLANK_STYLE as any;
+    if (basemap in BASEMAPS) return BASEMAPS[basemap as BasemapKey].style as any;
+    const custom = customBasemaps.find((b) => b.key === basemap);
+    if (custom) {
+      return custom.url.includes("{z}") ? buildXYZStyle(custom.url) : custom.url;
+    }
+    return BLANK_STYLE as any;
+  }
 
   const overlay = React.useMemo(() => new MapboxOverlay({ interleaved: false }), []);
 
@@ -170,7 +184,6 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
         const tileUrl = buildTileUrl(layer);
         const geomType = (layer.geomTypeOverride ?? layer.table.geom_type ?? "").toLowerCase();
         const isLine = geomType.includes("linestring");
-        const hasDash = isLine && !!layer.style.dashArray;
 
         return new MVTLayer({
           id: `layer-${layer.id}`,
@@ -191,25 +204,55 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
               }
             : layer.style.radius,
           pointRadiusUnits: "pixels",
-          getFillColor: [...fillRgb, fillAlpha] as [number, number, number, number],
+          getFillColor: (layer.style.categoricalFill ?? null)
+            ? (d: any) => {
+                const cf = layer.style.categoricalFill!;
+                const val = String(d.properties?.[cf.column] ?? "");
+                const rule = cf.rules.find((r) => r.value === val);
+                const rgb = hexToRgb(rule ? rule.color : cf.defaultColor);
+                return [...rgb, fillAlpha] as [number, number, number, number];
+              }
+            : (layer.style.opacityScale ?? null)
+            ? (d: any) => {
+                const s = layer.style.opacityScale!;
+                const v = Number(d.properties?.[s.column] ?? 0);
+                const t = s.maxValue === s.minValue ? 0 : Math.max(0, Math.min(1, (v - s.minValue) / (s.maxValue - s.minValue)));
+                const alpha = Math.round((s.minOutput + t * (s.maxOutput - s.minOutput)) * 255);
+                return [...fillRgb, alpha] as [number, number, number, number];
+              }
+            : [...fillRgb, fillAlpha] as [number, number, number, number],
           // strokeColor drives both line color (lines) and outline color (points/polygons)
-          getLineColor: [...strokeRgb, strokeAlpha] as [number, number, number, number],
-          getLineWidth: layer.style.lineWidth,
+          getLineColor: (layer.style.categoricalStroke ?? null)
+            ? (d: any) => {
+                const cs = layer.style.categoricalStroke!;
+                const val = String(d.properties?.[cs.column] ?? "");
+                const rule = cs.rules.find((r) => r.value === val);
+                const rgb = hexToRgb(rule ? rule.color : cs.defaultColor);
+                return [...rgb, strokeAlpha] as [number, number, number, number];
+              }
+            : (layer.style.strokeOpacityScale ?? null)
+            ? (d: any) => {
+                const s = layer.style.strokeOpacityScale!;
+                const v = Number(d.properties?.[s.column] ?? 0);
+                const t = s.maxValue === s.minValue ? 0 : Math.max(0, Math.min(1, (v - s.minValue) / (s.maxValue - s.minValue)));
+                const alpha = Math.round((s.minOutput + t * (s.maxOutput - s.minOutput)) * 255);
+                return [...strokeRgb, alpha] as [number, number, number, number];
+              }
+            : [...strokeRgb, strokeAlpha] as [number, number, number, number],
+          getLineWidth: (layer.style.lineWidthScale ?? null)
+            ? (d: any) => {
+                const s = layer.style.lineWidthScale!;
+                const v = Number(d.properties?.[s.column] ?? 0);
+                const t = s.maxValue === s.minValue ? 0 : Math.max(0, Math.min(1, (v - s.minValue) / (s.maxValue - s.minValue)));
+                return s.minOutput + t * (s.maxOutput - s.minOutput);
+              }
+            : layer.style.lineWidth,
           lineWidthUnits: "pixels",
-          ...(hasDash ? {
-            _subLayerProps: {
-              "line-strings": {
-                extensions: [new PathStyleExtension({ dash: true })],
-                getDashArray: layer.style.dashArray,
-                dashJustified: true,
-              },
-            },
-          } : {}),
           updateTriggers: {
             getPointRadius: [layer.style.radius, layer.style.radiusScale],
-            getFillColor: [layer.style.color, layer.style.opacity],
-            getLineColor: [layer.style.strokeColor, layer.style.strokeOpacity],
-            _subLayerProps: [layer.style.dashArray],
+            getFillColor: [layer.style.color, layer.style.opacity, layer.style.opacityScale, layer.style.categoricalFill],
+            getLineColor: [layer.style.strokeColor, layer.style.strokeOpacity, layer.style.categoricalStroke, layer.style.strokeOpacityScale],
+            getLineWidth: [layer.style.lineWidth, layer.style.lineWidthScale],
           },
           onClick: (info: any) => {
             // In draw mode, let the transparent overlay handle clicks
@@ -300,7 +343,7 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
         onLoad={onLoad}
         initialViewState={{ longitude: -98.5556199, latitude: 39.8097343, zoom: 4 }}
         style={{ width: "100%", height: "100%" }}
-        mapStyle={BASEMAPS[basemap].style as any}
+        mapStyle={resolveBasemapStyle()}
       />
 
       <GeocoderControl
@@ -328,31 +371,6 @@ export default function MaplibreMap({ layers, drawLayer, onCancelDraw, onLayerDa
           </div>
         </>
       )}
-
-      {/* Basemap picker */}
-      <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
-        {showBasemapPicker && (
-          <div className="flex flex-col rounded-md border bg-background/95 shadow-sm backdrop-blur-sm overflow-hidden mb-1">
-            {Object.entries(BASEMAPS).map(([key, { label }]) => (
-              <button
-                key={key}
-                onClick={() => { setBasemap(key); setShowBasemapPicker(false); }}
-                className={`px-3 py-1.5 text-xs text-left transition-colors hover:bg-muted ${
-                  basemap === key ? "font-semibold text-primary" : "text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        <button
-          onClick={() => setShowBasemapPicker((v) => !v)}
-          className="rounded-md border bg-background/90 px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm hover:bg-background transition-colors"
-        >
-          {BASEMAPS[basemap].label}
-        </button>
-      </div>
 
       {/* Feature properties dialog */}
       <Dialog open={isPropsOpen} onOpenChange={setIsPropsOpen}>

@@ -6,12 +6,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronUp, ChevronDown, Search, Plus, Trash2, X, Loader2, Filter } from "lucide-react";
+import { ChevronUp, ChevronDown, Search, Plus, Trash2, X, Loader2, Filter, Columns } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with";
+type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in";
 
 interface AttrFilter {
   id: string;
@@ -31,6 +31,7 @@ const OPERATOR_LABELS: Record<AttrOperator, string> = {
   is_null: "is null",
   is_not_null: "is not null",
   starts_with: "starts with",
+  in: "in",
 };
 const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
 const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];
@@ -47,11 +48,13 @@ interface Props {
   dsn: string;
   schema: string;
   table: string;
+  filters?: AttrFilter[];
+  onFiltersChange?: (filters: AttrFilter[]) => void;
 }
 
 const PAGE_SIZE = 100;
 
-export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }: Props) {
+export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, filters: externalFilters, onFiltersChange }: Props) {
   const [columns, setColumns] = React.useState<ColumnMeta[]>([]);
   const [rows, setRows] = React.useState<Record<string, any>[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -77,6 +80,11 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
   // Filter toolbar
   const [attrFilters, setAttrFilters] = React.useState<AttrFilter[]>([]);
   const [showFilters, setShowFilters] = React.useState(false);
+
+  // Column visibility
+  const [hiddenCols, setHiddenCols] = React.useState<Set<string>>(new Set());
+  const [showColPicker, setShowColPicker] = React.useState(false);
+  const colPickerRef = React.useRef<HTMLDivElement>(null);
 
   // Add row form
   const [addingRow, setAddingRow] = React.useState(false);
@@ -130,18 +138,21 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
 
   React.useEffect(() => {
     if (!open) return;
+    const initialFilters = externalFilters ?? [];
     setPage(0);
     setSortCol(null);
     setSortDir("asc");
     setSearch("");
     setSearchInput("");
-    setAttrFilters([]);
-    setShowFilters(false);
+    setAttrFilters(initialFilters);
+    setShowFilters(initialFilters.length > 0);
     setSelected(new Set());
     setEditCell(null);
     setAddingRow(false);
     setDeleteError(null);
-    fetchRows({ p: 0, sc: null, sd: "asc", s: "", af: [] });
+    setHiddenCols(new Set());
+    setShowColPicker(false);
+    fetchRows({ p: 0, sc: null, sd: "asc", s: "", af: initialFilters });
   }, [open, schema, table]);
 
   React.useEffect(() => {
@@ -272,18 +283,21 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
   function removeAttrFilter(id: string) {
     const next = attrFilters.filter((f) => f.id !== id);
     setAttrFilters(next);
+    onFiltersChange?.(next);
     setPage(0);
     fetchRows({ p: 0, af: next });
   }
 
   function applyAttrFilter(next: AttrFilter[]) {
     setAttrFilters(next);
+    onFiltersChange?.(next);
     setPage(0);
     fetchRows({ p: 0, af: next });
   }
 
   function clearAttrFilters() {
     setAttrFilters([]);
+    onFiltersChange?.([]);
     setPage(0);
     fetchRows({ p: 0, af: [] });
   }
@@ -296,7 +310,7 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
   const pageCount = Math.ceil(total / PAGE_SIZE);
   const rowStart = page * PAGE_SIZE + 1;
   const rowEnd = Math.min((page + 1) * PAGE_SIZE, total);
-  const displayCols = columns; // _ctid is in rows but not in columns array
+  const displayCols = columns.filter((c) => !hiddenCols.has(c.name));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -344,6 +358,64 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
                   </span>
                 )}
               </Button>
+              <div className="relative">
+                <Button
+                  size="sm"
+                  variant={hiddenCols.size > 0 ? "secondary" : "ghost"}
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setShowColPicker((v) => !v)}
+                >
+                  <Columns className="h-3 w-3" />
+                  Columns
+                  {hiddenCols.size > 0 && (
+                    <span className="ml-0.5 text-[10px] text-muted-foreground">
+                      {columns.length - hiddenCols.size}/{columns.length}
+                    </span>
+                  )}
+                </Button>
+                {showColPicker && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowColPicker(false)} />
+                    <div
+                      ref={colPickerRef}
+                      className="absolute right-0 top-full mt-1 z-20 bg-background border rounded-md shadow-lg py-1 min-w-44 max-h-72 overflow-y-auto"
+                    >
+                      <div className="px-2 py-1 flex items-center justify-between border-b mb-1">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Visible columns</span>
+                        {hiddenCols.size > 0 && (
+                          <button
+                            className="text-[10px] text-primary hover:underline"
+                            onClick={() => setHiddenCols(new Set())}
+                          >
+                            Show all
+                          </button>
+                        )}
+                      </div>
+                      {columns.map((col) => (
+                        <label
+                          key={col.name}
+                          className="flex items-center gap-2 px-2 py-1 hover:bg-muted/50 cursor-pointer text-xs"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-3 w-3 shrink-0"
+                            checked={!hiddenCols.has(col.name)}
+                            onChange={() => {
+                              setHiddenCols((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(col.name)) next.delete(col.name);
+                                else next.add(col.name);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className="font-mono truncate">{col.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
               {selected.size > 0 && (
                 <Button
                   size="sm" variant="destructive" className="h-7 text-xs"
@@ -402,7 +474,7 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table }:
                 {!NULL_OPERATORS.includes(f.operator) && (
                   <Input
                     value={f.value}
-                    placeholder="value"
+                    placeholder={f.operator === "in" ? "a,b,c" : "value"}
                     onChange={(e) => setAttrFilters((prev) => prev.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
                     onBlur={(e) => applyAttrFilter(attrFilters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
                     onKeyDown={(e) => {
