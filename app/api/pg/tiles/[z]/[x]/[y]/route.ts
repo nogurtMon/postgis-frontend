@@ -120,6 +120,14 @@ export async function GET(
           filterClauses.push(`${col}::text IN (${placeholders})`);
           break;
         }
+        case "not_in": {
+          if (!f.value?.trim()) break;
+          const vals = f.value.split(",").map((v) => v.trim()).filter(Boolean);
+          if (vals.length === 0) break;
+          const placeholders = vals.map((v) => { queryParams.push(v); return `$${queryParams.length}`; }).join(", ");
+          filterClauses.push(`${col}::text NOT IN (${placeholders})`);
+          break;
+        }
       }
     }
 

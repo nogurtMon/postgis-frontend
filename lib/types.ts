@@ -9,7 +9,7 @@ export interface TableRow {
   has_spatial_index?: boolean | null;
 }
 
-export type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in";
+export type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in" | "not_in";
 
 export interface ValueScale {
   column: string;

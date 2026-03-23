@@ -47,7 +47,7 @@ const OPERATOR_LABELS: Record<AttrOperator, string> = {
   ilike: "contains", eq: "equals", neq: "not equals",
   gt: ">", lt: "<", gte: "≥", lte: "≤",
   is_null: "is null", is_not_null: "is not null", starts_with: "starts with",
-  in: "in",
+  in: "in", not_in: "not in",
 };
 const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
 const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];
@@ -417,6 +417,19 @@ function LayerFilterEditor({
   onUpdateLayer: (id: string, patch: Partial<MapLayer>) => void;
 }) {
   const [columns, setColumns] = React.useState<{ name: string; dataType: string; isGeom: boolean }[]>([]);
+  // Local draft values for text inputs — applied on blur or Enter
+  const [drafts, setDrafts] = React.useState<Record<string, string>>(() =>
+    Object.fromEntries(layer.filters.map((f) => [f.id, f.value]))
+  );
+
+  // Sync drafts when filters are added/removed
+  React.useEffect(() => {
+    setDrafts((prev) => {
+      const next: Record<string, string> = {};
+      layer.filters.forEach((f) => { next[f.id] = f.id in prev ? prev[f.id] : f.value; });
+      return next;
+    });
+  }, [layer.filters.map((f) => f.id).join(",")]);
 
   React.useEffect(() => {
     if (!dsn || !layer.table.table_schema || !layer.table.table_name) return;
@@ -436,73 +449,84 @@ function LayerFilterEditor({
     onUpdateLayer(layer.id, { filters: next });
   }
 
+  function applyDraft(id: string) {
+    apply(layer.filters.map((fi) => fi.id === id ? { ...fi, value: drafts[id] ?? "" } : fi));
+  }
+
   function addFilter() {
-    apply([...layer.filters, { id: crypto.randomUUID(), column: nonGeomCols[0]?.name ?? "", operator: "ilike" as AttrOperator, value: "" }]);
+    const newFilter = { id: crypto.randomUUID(), column: nonGeomCols[0]?.name ?? "", operator: "ilike" as AttrOperator, value: "" };
+    apply([...layer.filters, newFilter]);
   }
 
   function removeFilter(id: string) {
     apply(layer.filters.filter((f) => f.id !== id));
   }
 
+  const IN_OPERATORS: AttrOperator[] = ["in", "not_in"];
+
   return (
     <div className="space-y-1.5">
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</p>
 
-      {layer.filters.map((f, i) => (
-        <div key={f.id} className="space-y-1 pb-1.5 border-b last:border-0">
-          {/* Row 1: if/and + column + remove */}
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground w-6 shrink-0 text-right">{i === 0 ? "if" : "and"}</span>
-            <Select value={f.column} onValueChange={(col) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, column: col, value: "" } : fi))}>
-              <SelectTrigger className="h-6 text-[11px] flex-1 min-w-0 font-mono">
-                <SelectValue placeholder="column" />
-              </SelectTrigger>
-              <SelectContent>
-                {nonGeomCols.map((c) => (
-                  <SelectItem key={c.name} value={c.name} className="text-xs font-mono">{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <button onClick={() => removeFilter(f.id)} className="shrink-0 text-muted-foreground hover:text-destructive">
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-          {/* Row 2: operator (full width) */}
-          <div className="pl-7">
-            <Select value={f.operator} onValueChange={(op) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, operator: op as AttrOperator, value: "" } : fi))}>
-              <SelectTrigger className="h-6 text-[11px] w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ALL_OPERATORS.map((op) => (
-                  <SelectItem key={op} value={op} className="text-xs">{OPERATOR_LABELS[op]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {/* Row 3: value (full width, only when needed) */}
-          {f.operator === "in" ? (
-            <div className="pl-7">
-              <InValuePicker
-                dsn={dsn} schema={layer.table.table_schema} table={layer.table.table_name} column={f.column}
-                value={f.value}
-                onChange={(v) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: v } : fi))}
-              />
+      {layer.filters.map((f, i) => {
+        const isPending = !IN_OPERATORS.includes(f.operator) && !NULL_OPERATORS.includes(f.operator) && (drafts[f.id] ?? "") !== f.value;
+        return (
+          <div key={f.id} className="space-y-1 pb-1.5 border-b last:border-0">
+            {/* Row 1: if/and + column + remove */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground w-6 shrink-0 text-right">{i === 0 ? "if" : "and"}</span>
+              <Select value={f.column} onValueChange={(col) => { apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, column: col, value: "" } : fi)); setDrafts((p) => ({ ...p, [f.id]: "" })); }}>
+                <SelectTrigger className="h-6 text-[11px] flex-1 min-w-0 font-mono">
+                  <SelectValue placeholder="column" />
+                </SelectTrigger>
+                <SelectContent>
+                  {nonGeomCols.map((c) => (
+                    <SelectItem key={c.name} value={c.name} className="text-xs font-mono">{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <button onClick={() => removeFilter(f.id)} className="shrink-0 text-muted-foreground hover:text-destructive">
+                <X className="h-3 w-3" />
+              </button>
             </div>
-          ) : !NULL_OPERATORS.includes(f.operator) && (
+            {/* Row 2: operator (full width) */}
             <div className="pl-7">
-              <Input
-                value={f.value}
-                placeholder="value"
-                onChange={(e) => onUpdateLayer(layer.id, { filters: layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi) })}
-                onBlur={(e) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
-                onKeyDown={(e) => { if (e.key === "Enter") apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: (e.target as HTMLInputElement).value } : fi)); }}
-                className="h-6 text-[11px] w-full"
-              />
+              <Select value={f.operator} onValueChange={(op) => { apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, operator: op as AttrOperator, value: "" } : fi)); setDrafts((p) => ({ ...p, [f.id]: "" })); }}>
+                <SelectTrigger className="h-6 text-[11px] w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_OPERATORS.map((op) => (
+                    <SelectItem key={op} value={op} className="text-xs">{OPERATOR_LABELS[op]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
-        </div>
-      ))}
+            {/* Row 3: value */}
+            {IN_OPERATORS.includes(f.operator) ? (
+              <div className="pl-7">
+                <InValuePicker
+                  dsn={dsn} schema={layer.table.table_schema} table={layer.table.table_name} column={f.column}
+                  value={f.value}
+                  onChange={(v) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: v } : fi))}
+                />
+              </div>
+            ) : !NULL_OPERATORS.includes(f.operator) && (
+              <div className="pl-7 space-y-0.5">
+                <Input
+                  value={drafts[f.id] ?? ""}
+                  placeholder="value"
+                  onChange={(e) => setDrafts((p) => ({ ...p, [f.id]: e.target.value }))}
+                  onBlur={() => applyDraft(f.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter") applyDraft(f.id); }}
+                  className={`h-6 text-[11px] w-full ${isPending ? "border-amber-400 dark:border-amber-600" : ""}`}
+                />
+                {isPending && <p className="text-[10px] text-muted-foreground">Press Enter to apply</p>}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       <Button size="sm" variant="ghost" className="h-6 text-xs px-2 w-full justify-start" onClick={addFilter}>
         <Plus className="h-3 w-3 mr-1" /> Add filter

@@ -4,32 +4,6 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { Button } from "@/components/ui/button";
 
 
-const faqs = [
-  {
-    q: "Is it safe to enter my database connection string?",
-    a: "Your connection string is stored only in your browser's localStorage — it never leaves your device except to reach your own database. When you perform any operation, your browser sends the DSN to the Next.js API route, which opens a connection, executes the query, and immediately discards the DSN. Nothing is logged or persisted server-side. You can verify this by reading the source code.",
-  },
-  {
-    q: "Should I use my admin credentials?",
-    a: "It depends on what you need to do. For read-only exploration, a dedicated user with SELECT access is safest. For full workflow use — importing files, editing rows, managing tables — you'll need a user with the appropriate write permissions on the schemas you're working in.",
-  },
-  {
-    q: "Can it modify or delete my data?",
-    a: "Yes. This is a full read-write tool. You can insert, edit, and delete rows, create and drop tables, and import data directly into your database. Make sure the PostgreSQL user you connect with has only the permissions you intend to grant.",
-  },
-  {
-    q: "Does this work with cloud databases like Neon, Supabase, or RDS?",
-    a: "Yes — any PostgreSQL database with the PostGIS extension enabled works, including Neon, Supabase, AWS RDS, and self-hosted instances. Since this app is deployed on Vercel, your database needs to accept connections from Vercel's outbound IP ranges. Most managed providers let you allowlist IPs in their network settings, or you can set your database to accept all connections and rely on credential security.",
-  },
-  {
-    q: "What PostGIS version do I need?",
-    a: "PostGIS 2.4 or later. ST_AsMVT (used for tile generation) has been stable since PostGIS 2.4 and is available in all major managed PostgreSQL providers.",
-  },
-  {
-    q: "Is there a row limit?",
-    a: "No hard limit is enforced — tiles are clipped and simplified by PostGIS for the current viewport, so large tables remain usable at low zoom levels. Performance depends on your database hardware and whether your geometry column has a spatial index.",
-  },
-];
 
 export default function LandingPage() {
   return (
@@ -119,21 +93,6 @@ export default function LandingPage() {
                   <h3 className="font-semibold mb-1.5">{title}</h3>
                   <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* FAQ */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-3xl px-6 py-20">
-          <h2 className="text-2xl font-bold tracking-tight text-center mb-12">Frequently asked questions</h2>
-          <div className="space-y-8">
-            {faqs.map(({ q, a }) => (
-              <div key={q}>
-                <h3 className="font-semibold mb-2">{q}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{a}</p>
               </div>
             ))}
           </div>
