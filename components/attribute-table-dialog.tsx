@@ -11,7 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in";
+type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in" | "not_in";
 
 interface AttrFilter {
   id: string;
@@ -32,6 +32,7 @@ const OPERATOR_LABELS: Record<AttrOperator, string> = {
   is_not_null: "is not null",
   starts_with: "starts with",
   in: "in",
+  not_in: "not in",
 };
 const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
 const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];

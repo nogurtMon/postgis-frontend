@@ -7,6 +7,8 @@ import { DeleteTableDialog } from "@/components/delete-table-dialog";
 import { RenameTableDialog } from "@/components/rename-table-dialog";
 import { AttributeTableDialog } from "@/components/attribute-table-dialog";
 import { TableInfoDialog } from "@/components/table-info-dialog";
+import { ImportDialog } from "@/components/import-dialog";
+import { FeatureServerDialog } from "@/components/feature-server-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -584,6 +586,8 @@ export function TableSidebar({
   const [castLoading, setCastLoading] = React.useState(false);
   const [castError, setCastError] = React.useState<string | null>(null);
 
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [featureServerOpen, setFeatureServerOpen] = React.useState(false);
   const [connectionOpen, setConnectionOpen] = React.useState(false);
   const [basemapOpen, setBasemapOpen] = React.useState(false);
   const [addingBasemap, setAddingBasemap] = React.useState(false);
@@ -1294,6 +1298,20 @@ export function TableSidebar({
         onCreated={() => setRefreshKey((k) => k + 1)}
         defaultSchema={createDefaultSchema}
       />
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        dsn={dsn}
+        schemas={[...new Set(tables.map(t => t.table_schema))].filter(Boolean).sort()}
+        onImported={() => setRefreshKey((k) => k + 1)}
+      />
+      <FeatureServerDialog
+        open={featureServerOpen}
+        onOpenChange={setFeatureServerOpen}
+        dsn={dsn}
+        schemas={[...new Set(tables.map(t => t.table_schema))].filter(Boolean).sort()}
+        onImported={() => setRefreshKey((k) => k + 1)}
+      />
       {renameTarget && (
         <RenameTableDialog
           open={!!renameTarget}
@@ -1358,6 +1376,12 @@ export function TableSidebar({
                 <>
                   <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setCreateOpen(true); setContextMenu(null); }}>
                     Create table
+                  </button>
+                  <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setImportOpen(true); setContextMenu(null); }}>
+                    Import file…
+                  </button>
+                  <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setFeatureServerOpen(true); setContextMenu(null); }}>
+                    Scrape feature server…
                   </button>
                   <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setRefreshKey((k) => k + 1); setContextMenu(null); }}>
                     Refresh

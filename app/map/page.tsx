@@ -10,8 +10,9 @@ import type { TableRow, MapLayer, BasemapDef } from "@/lib/types";
 import type { ZoomTarget } from "@/components/maplibre-map";
 
 import { Button } from "@/components/ui/button";
-import { Settings } from "lucide-react";
+import { Settings, Share2 } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
+import { ShareDialog } from "@/components/share-dialog";
 
 function dbLabel(dsn: string) {
   try {
@@ -47,6 +48,7 @@ function loadCustomBasemaps(): BasemapDef[] {
 export default function Home() {
   const { dsn, setDsn, loaded } = useDsn();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
@@ -177,6 +179,11 @@ export default function Home() {
             </span>
           )}
           <ModeToggle />
+          {layers.length > 0 && (
+            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setShareOpen(true)} title="Share map view">
+              <Share2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSettingsOpen(true)} title="Connection settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -220,6 +227,13 @@ export default function Home() {
         dsn={dsn}
         onSave={setDsn}
         onDisconnect={() => setDsn("")}
+      />
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        layers={layers}
+        basemap={basemap}
+        customBasemaps={customBasemaps}
       />
     </div>
   );
