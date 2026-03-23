@@ -751,6 +751,7 @@ export function TableSidebar({
             <span className={`w-2 h-2 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-400"}`} title={dsn ? "Connected" : "Not connected"} />
           </button>
 
+          {!dsn && <p className="pl-8 py-2 text-xs text-muted-foreground/60">Right-click to connect…</p>}
           {loading && <p className="pl-8 py-1.5 text-xs text-muted-foreground">Loading…</p>}
           {error && <p className="pl-8 py-1.5 text-xs text-destructive break-words">{error}</p>}
 
@@ -1033,7 +1034,10 @@ export function TableSidebar({
       {tab === "layers" && (
         <ScrollArea className="flex-1 min-h-0">
           {layers.length === 0 && !basemap && (
-            <p className="p-4 text-xs text-muted-foreground">No layers. Add tables from the Browser tab.</p>
+            <div className="p-4 space-y-1">
+              <p className="text-xs text-muted-foreground">No layers added yet.</p>
+              <p className="text-xs text-muted-foreground/60">Double-click a table in the Browser tab, or right-click for more options.</p>
+            </div>
           )}
 
           {[...layers].reverse().map((layer) => {
@@ -1095,7 +1099,7 @@ export function TableSidebar({
                 onContextMenu={(e) => { e.preventDefault(); setLayerCtx({ x: e.clientX, y: e.clientY, layerId: layer.id }); }}
               >
                 {/* Layer row */}
-                <div className="flex items-center gap-1 px-1.5 py-1.5 min-w-0">
+                <div className={`flex items-center gap-1 px-1.5 py-1.5 min-w-0 ${!layer.visible ? "opacity-40" : ""}`}>
                   <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 cursor-grab" />
                   <label className="shrink-0 cursor-pointer" title={isLine ? "Change line color" : "Change fill color"}>
                     <span
@@ -1114,7 +1118,12 @@ export function TableSidebar({
                     />
                   </label>
                   <span className="flex-1 flex items-center gap-1 min-w-0 overflow-hidden">
-                    <span className="text-xs truncate font-medium max-w-48">{layer.table.table_name}</span>
+                    <span className="flex flex-col min-w-0">
+                      <span className="text-xs truncate font-medium leading-tight">{layer.table.table_name}</span>
+                      {layer.table.table_schema !== "public" && (
+                        <span className="text-[10px] text-muted-foreground truncate leading-tight">{layer.table.table_schema}</span>
+                      )}
+                    </span>
                     {layer.filters.length > 0 && (
                       <Badge variant="secondary" className="shrink-0 h-4 px-1 text-[10px]">
                         {layer.filters.length}
@@ -1228,11 +1237,15 @@ export function TableSidebar({
           {basemap && (() => {
             const bDef = [...BASEMAP_OPTIONS, ...customBasemaps.map((b) => ({ key: b.key, label: b.label }))].find((b) => b.key === basemap);
             return (
-              <div className="flex items-center gap-1.5 px-2 py-1.5 border-t">
+              <div className="flex items-center gap-1 px-1.5 py-1.5 border-t">
+                <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/20" />
                 <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                <span className="text-xs flex-1 text-muted-foreground">{bDef?.label ?? basemap}</span>
+                <span className="flex-1 flex flex-col min-w-0">
+                  <span className="text-xs font-medium truncate leading-tight">{bDef?.label ?? basemap}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">Basemap</span>
+                </span>
                 <button
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  className="shrink-0 text-muted-foreground hover:text-foreground p-0.5"
                   title="Remove basemap"
                   onClick={() => onBasemapChange("")}
                 >

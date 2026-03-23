@@ -56,7 +56,7 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave, onDisconnect }
           </div>
 
           <p className="text-sm text-muted-foreground">
-            Don&apos;t have a PostgreSQL database with PostGIS?{" Try "}
+            Don&apos;t have a PostGIS database? Try{" "}
             <a
               href="https://neon.tech"
               target="_blank"
@@ -65,6 +65,7 @@ export function SettingsDialog({ open, onOpenChange, dsn, onSave, onDisconnect }
             >
               Neon
             </a>{" "}
+            — free tier includes PostGIS.
           </p>
 
           <div className="flex justify-between gap-2">

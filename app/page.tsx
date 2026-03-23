@@ -61,7 +61,7 @@ export default function LandingPage() {
           The Interface PostGIS Deserves
         </h1>
         <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
-          An open-source interface to connect your PostGIS database, manage its tables, import files (.shp, .geojson, .gpkg), scrape feature servers, visualize and edit data, and share live map views—all from the browser.
+          An open-source interface to connect to your PostGIS database, manage its tables, import files (.shp, .geojson, .gpkg), scrape feature servers, visualize and edit data, and share live map views—all from the browser.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3">
           <Button asChild size="lg">

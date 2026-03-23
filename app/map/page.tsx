@@ -50,7 +50,7 @@ export default function Home() {
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
-  const [basemap, setBasemap] = React.useState("");
+  const [basemap, setBasemap] = React.useState("liberty");
   const [customBasemaps, setCustomBasemaps] = React.useState<BasemapDef[]>(() => loadCustomBasemaps());
 
   async function zoomToLayer(layer: MapLayer) {
