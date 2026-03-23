@@ -449,7 +449,8 @@ function LayerFilterEditor({
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</p>
 
       {layer.filters.map((f, i) => (
-        <div key={f.id} className="space-y-1">
+        <div key={f.id} className="space-y-1 pb-1.5 border-b last:border-0">
+          {/* Row 1: if/and + column + remove */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground w-6 shrink-0 text-right">{i === 0 ? "if" : "and"}</span>
             <Select value={f.column} onValueChange={(col) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, column: col, value: "" } : fi))}>
@@ -466,9 +467,10 @@ function LayerFilterEditor({
               <X className="h-3 w-3" />
             </button>
           </div>
-          <div className={`flex items-${f.operator === "in" ? "start" : "center"} gap-1 pl-7`}>
+          {/* Row 2: operator (full width) */}
+          <div className="pl-7">
             <Select value={f.operator} onValueChange={(op) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, operator: op as AttrOperator, value: "" } : fi))}>
-              <SelectTrigger className="h-6 text-[11px] w-28 shrink-0">
+              <SelectTrigger className="h-6 text-[11px] w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -477,23 +479,28 @@ function LayerFilterEditor({
                 ))}
               </SelectContent>
             </Select>
-            {f.operator === "in" ? (
+          </div>
+          {/* Row 3: value (full width, only when needed) */}
+          {f.operator === "in" ? (
+            <div className="pl-7">
               <InValuePicker
                 dsn={dsn} schema={layer.table.table_schema} table={layer.table.table_name} column={f.column}
                 value={f.value}
                 onChange={(v) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: v } : fi))}
               />
-            ) : !NULL_OPERATORS.includes(f.operator) && (
+            </div>
+          ) : !NULL_OPERATORS.includes(f.operator) && (
+            <div className="pl-7">
               <Input
                 value={f.value}
                 placeholder="value"
                 onChange={(e) => onUpdateLayer(layer.id, { filters: layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi) })}
                 onBlur={(e) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: e.target.value } : fi))}
                 onKeyDown={(e) => { if (e.key === "Enter") apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: (e.target as HTMLInputElement).value } : fi)); }}
-                className="h-6 text-[11px] flex-1 min-w-0"
+                className="h-6 text-[11px] w-full"
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       ))}
 
