@@ -53,7 +53,7 @@ export default function LandingPage() {
       <section className="border-t">
         <div className="mx-auto max-w-5xl px-6 py-20">
           <h2 className="text-2xl font-bold tracking-tight text-center mb-4">Supported workflows</h2>
-          <p className="text-center text-muted-foreground text-sm mb-14 max-w-xl mx-auto">Everything you'd reach for a desktop GIS or a collection of scripts — available directly in your browser, connected live to your database.</p>
+          <p className="text-center text-muted-foreground text-sm mb-14 max-w-xl mx-auto">Everything you'd reach for a desktop GIS or Python script — available directly in your browser, connected live to your database.</p>
           <div className="grid sm:grid-cols-2 gap-10">
             {[
               {
