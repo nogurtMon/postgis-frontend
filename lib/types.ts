@@ -95,7 +95,7 @@ export const DEFAULT_STYLE: LayerStyle = {
   opacity: 0.85,
   strokeOpacity: 1.0,
   radius: 6,
-  lineWidth: 2,
+  lineWidth: 1,
   radiusScale: null,
   lineWidthScale: null,
   opacityScale: null,

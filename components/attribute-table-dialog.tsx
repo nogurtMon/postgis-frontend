@@ -5,8 +5,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ChevronUp, ChevronDown, Search, Plus, Trash2, X, Loader2, Filter, Columns } from "lucide-react";
+import { ChevronUp, ChevronDown, Search, X, Loader2, Filter, Columns, Plus } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -51,11 +50,12 @@ interface Props {
   table: string;
   filters?: AttrFilter[];
   onFiltersChange?: (filters: AttrFilter[]) => void;
+  onDataChanged?: () => void;
 }
 
 const PAGE_SIZE = 100;
 
-export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, filters: externalFilters, onFiltersChange }: Props) {
+export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, filters: externalFilters, onFiltersChange, onDataChanged }: Props) {
   const [columns, setColumns] = React.useState<ColumnMeta[]>([]);
   const [rows, setRows] = React.useState<Record<string, any>[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -67,16 +67,6 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Inline cell editing
-  const [editCell, setEditCell] = React.useState<{ ctid: string; col: string } | null>(null);
-  const [editValue, setEditValue] = React.useState("");
-  const [saving, setSaving] = React.useState(false);
-  const editRef = React.useRef<HTMLInputElement>(null);
-
-  // Row selection
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = React.useState(false);
-  const [deleteError, setDeleteError] = React.useState<string | null>(null);
 
   // Filter toolbar
   const [attrFilters, setAttrFilters] = React.useState<AttrFilter[]>([]);
@@ -87,20 +77,9 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
   const [showColPicker, setShowColPicker] = React.useState(false);
   const colPickerRef = React.useRef<HTMLDivElement>(null);
 
-  // Add row form
-  const [addingRow, setAddingRow] = React.useState(false);
-  const [newRowValues, setNewRowValues] = React.useState<Record<string, string>>({});
-  const [addError, setAddError] = React.useState<string | null>(null);
-  const [addLoading, setAddLoading] = React.useState(false);
-
-  // editableCols: anything that isn't geometry (id is editable but shown differently)
+  // editableCols: non-geometry columns (used for filters)
   const editableCols = React.useMemo(
     () => columns.filter((c) => !c.isGeom),
-    [columns]
-  );
-  // addRowCols: skip id (serial) and geometry
-  const addRowCols = React.useMemo(
-    () => columns.filter((c) => !c.isGeom && c.name !== "id"),
     [columns]
   );
 
@@ -147,18 +126,10 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
     setSearchInput("");
     setAttrFilters(initialFilters);
     setShowFilters(initialFilters.length > 0);
-    setSelected(new Set());
-    setEditCell(null);
-    setAddingRow(false);
-    setDeleteError(null);
     setHiddenCols(new Set());
     setShowColPicker(false);
     fetchRows({ p: 0, sc: null, sd: "asc", s: "", af: initialFilters });
   }, [open, schema, table]);
-
-  React.useEffect(() => {
-    if (editCell) editRef.current?.focus();
-  }, [editCell]);
 
   function handleSort(col: string) {
     let newCol: string | null = col;
@@ -190,89 +161,7 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
 
   function handlePageChange(newPage: number) {
     setPage(newPage);
-    setSelected(new Set());
     fetchRows({ p: newPage });
-  }
-
-  function startEdit(ctid: string, col: string, currentValue: any) {
-    setEditCell({ ctid, col });
-    setEditValue(currentValue == null ? "" : String(currentValue));
-  }
-
-  async function saveEdit() {
-    if (!editCell || saving) return;
-    setSaving(true);
-    const { ctid, col } = editCell;
-    setEditCell(null);
-    try {
-      const res = await fetch("/api/pg/table-rows", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table, ctid, column: col, value: editValue }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      fetchRows();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteSelected() {
-    if (selected.size === 0) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      const res = await fetch("/api/pg/table-rows", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table, ctids: [...selected] }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setSelected(new Set());
-      setPage(0);
-      fetchRows({ p: 0 });
-    } catch (e: any) {
-      setDeleteError(e.message);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  function openAddRow() {
-    const initial: Record<string, string> = {};
-    addRowCols.forEach((c) => { initial[c.name] = ""; });
-    setNewRowValues(initial);
-    setAddingRow(true);
-    setAddError(null);
-  }
-
-  async function submitAddRow() {
-    setAddLoading(true);
-    setAddError(null);
-    try {
-      const values: Record<string, string> = {};
-      for (const [k, v] of Object.entries(newRowValues)) {
-        if (v.trim() !== "") values[k] = v;
-      }
-      const res = await fetch("/api/pg/table-rows", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table, values }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setAddingRow(false);
-      setPage(0);
-      fetchRows({ p: 0 });
-    } catch (e: any) {
-      setAddError(e.message);
-    } finally {
-      setAddLoading(false);
-    }
   }
 
   function addAttrFilter() {
@@ -307,7 +196,6 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
     (f) => f.column && (NULL_OPERATORS.includes(f.operator) || f.value.trim() !== "")
   ).length;
 
-  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r._ctid));
   const pageCount = Math.ceil(total / PAGE_SIZE);
   const rowStart = page * PAGE_SIZE + 1;
   const rowEnd = Math.min((page + 1) * PAGE_SIZE, total);
@@ -417,21 +305,8 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
                   </>
                 )}
               </div>
-              {selected.size > 0 && (
-                <Button
-                  size="sm" variant="destructive" className="h-7 text-xs"
-                  onClick={deleteSelected} disabled={deleting}
-                >
-                  <Trash2 className="h-3 w-3 mr-1" />
-                  {deleting ? "Deleting…" : `Delete ${selected.size}`}
-                </Button>
-              )}
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={openAddRow} disabled={addingRow}>
-                <Plus className="h-3 w-3 mr-1" /> Add row
-              </Button>
             </div>
           </div>
-          {deleteError && <p className="text-xs text-destructive mt-1">{deleteError}</p>}
         </DialogHeader>
 
         {/* Filter panel */}
@@ -497,38 +372,6 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
           </div>
         )}
 
-        {/* Add row form */}
-        {addingRow && (
-          <div className="shrink-0 px-4 py-3 border-b bg-muted/20 space-y-2">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">New row</p>
-            <div className="flex flex-wrap gap-3">
-              {addRowCols.map((col) => (
-                <div key={col.name} className="space-y-0.5 min-w-0">
-                  <Label className="text-[10px] font-mono text-muted-foreground">{col.name}</Label>
-                  <Input
-                    value={newRowValues[col.name] ?? ""}
-                    onChange={(e) => setNewRowValues((prev) => ({ ...prev, [col.name]: e.target.value }))}
-                    className="h-7 text-xs font-mono w-36"
-                    placeholder="null"
-                  />
-                </div>
-              ))}
-              {addRowCols.length === 0 && (
-                <p className="text-xs text-muted-foreground">No editable columns (geometry-only table).</p>
-              )}
-            </div>
-            {addError && <p className="text-xs text-destructive">{addError}</p>}
-            <div className="flex gap-2">
-              <Button size="sm" className="h-7 text-xs" onClick={submitAddRow} disabled={addLoading}>
-                {addLoading ? "Saving…" : "Save row"}
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAddingRow(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-
         {/* Table */}
         <div className="flex-1 min-h-0 overflow-auto">
           {loading && (
@@ -541,17 +384,6 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 bg-background z-10 border-b shadow-sm">
                 <tr>
-                  <th className="w-8 px-2 py-2 border-r">
-                    <input
-                      type="checkbox"
-                      className="h-3 w-3"
-                      checked={allSelected}
-                      onChange={(e) => {
-                        if (e.target.checked) setSelected(new Set(rows.map((r) => r._ctid)));
-                        else setSelected(new Set());
-                      }}
-                    />
-                  </th>
                   {displayCols.map((col) => (
                     <th
                       key={col.name}
@@ -575,51 +407,14 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
                 {rows.map((row, ri) => (
                   <tr
                     key={row._ctid}
-                    className={`border-b ${selected.has(row._ctid) ? "bg-primary/8" : ri % 2 === 0 ? "" : "bg-muted/20"} hover:bg-muted/40`}
+                    className={`border-b ${ri % 2 === 0 ? "" : "bg-muted/20"} hover:bg-muted/40`}
                   >
-                    <td className="w-8 px-2 py-1 border-r">
-                      <input
-                        type="checkbox"
-                        className="h-3 w-3"
-                        checked={selected.has(row._ctid)}
-                        onChange={(e) => {
-                          const next = new Set(selected);
-                          if (e.target.checked) next.add(row._ctid);
-                          else next.delete(row._ctid);
-                          setSelected(next);
-                        }}
-                      />
-                    </td>
                     {displayCols.map((col) => {
-                      const isEditing = editCell?.ctid === row._ctid && editCell?.col === col.name;
                       const val = row[col.name];
-                      // id is readable but not editable to prevent pk conflicts
-                      const canEdit = !col.isGeom && col.name !== "id";
-
-                      if (isEditing) {
-                        return (
-                          <td key={col.name} className="p-0 border-r last:border-r-0">
-                            <input
-                              ref={editRef}
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              onBlur={saveEdit}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") { e.preventDefault(); saveEdit(); }
-                                if (e.key === "Escape") setEditCell(null);
-                                if (e.key === "Tab") { e.preventDefault(); saveEdit(); }
-                              }}
-                              className="w-full h-full px-2 py-1 text-xs font-mono bg-primary/5 border-2 border-primary outline-none"
-                            />
-                          </td>
-                        );
-                      }
-
                       return (
                         <td
                           key={col.name}
-                          className={`px-2 py-1 border-r last:border-r-0 max-w-[16rem] overflow-hidden ${canEdit ? "cursor-pointer hover:bg-primary/10" : ""}`}
-                          onClick={() => canEdit && startEdit(row._ctid, col.name, val)}
+                          className="px-2 py-1 border-r last:border-r-0 max-w-[16rem] overflow-hidden"
                           title={val == null ? "NULL" : String(val)}
                         >
                           {val == null ? (
@@ -638,7 +433,7 @@ export function AttributeTableDialog({ open, onOpenChange, dsn, schema, table, f
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={displayCols.length + 1} className="text-center py-12 text-muted-foreground">
+                    <td colSpan={displayCols.length} className="text-center py-12 text-muted-foreground">
                       {search ? "No rows match the search." : "This table has no rows."}
                     </td>
                   </tr>

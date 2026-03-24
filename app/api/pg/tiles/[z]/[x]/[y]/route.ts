@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { getPool } from "@/lib/pool";
+import { resolveDsn } from "@/lib/resolve-dsn";
 
-const pools = new Map<string, Pool>();
-function getPool(dsn: string) {
-  if (!pools.has(dsn)) pools.set(dsn, new Pool({ connectionString: dsn, max: 5 }));
-  return pools.get(dsn)!;
-}
 
 // Safe SQL identifier quoting
 function qi(name: string) {
   return '"' + name.replace(/"/g, '""') + '"';
 }
 
-// Column name cache: "dsn|schema.table" -> column names (excluding geom)
+// Column name cache: "dsn|schema.table|geomCol" -> column names (excluding geom)
 const colCache = new Map<string, string[]>();
 
 async function getNonGeomCols(pool: Pool, schema: string, table: string, geomCol: string, cacheKey: string) {
@@ -40,14 +37,14 @@ export async function GET(
   const { z: zs, x: xs, y: ys } = await params;
   const { searchParams } = req.nextUrl;
 
-  const dsn = searchParams.get("dsn");
   const schema = searchParams.get("schema");
   const table = searchParams.get("table");
   const geomCol = searchParams.get("geomCol") ?? "geom";
   const srid = parseInt(searchParams.get("srid") ?? "4326", 10);
 
-  if (!dsn?.startsWith("postgres"))
-    return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+  let dsn: string;
+  try { dsn = resolveDsn(searchParams.get("dsn")); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
   if (!schema || !table)
     return NextResponse.json({ error: "Missing schema or table" }, { status: 400 });
 
@@ -66,7 +63,7 @@ export async function GET(
   const pool = getPool(dsn);
 
   try {
-    const cacheKey = `${dsn}|${schema}.${table}`;
+    const cacheKey = `${dsn}|${schema}.${table}|${geomCol}`;
     const propCols = await getNonGeomCols(pool, schema, table, geomCol, cacheKey);
 
     // Build parameterized WHERE clauses for filters
@@ -171,6 +168,7 @@ export async function GET(
       },
     });
   } catch (e: any) {
+    console.error("[tiles 500]", { schema, table, z, x, y, geomCol, srid, error: e.message });
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }

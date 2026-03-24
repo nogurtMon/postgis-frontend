@@ -46,11 +46,37 @@ function loadCustomBasemaps(): BasemapDef[] {
 }
 
 export default function Home() {
-  const { dsn, setDsn, loaded } = useDsn();
+  const { dsn, token, setDsn, setToken, clearAll, loaded } = useDsn();
+
+  // Register DSN with server to get an encrypted token whenever DSN changes or on first load
+  async function registerDsn(rawDsn: string) {
+    if (!rawDsn) return;
+    try {
+      const res = await fetch("/api/pg/register-dsn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dsn: rawDsn }),
+      });
+      const data = await res.json();
+      if (data.token) setToken(data.token);
+    } catch {}
+  }
+
+  // On mount: if we have a saved DSN but no token (e.g. first run after upgrade), re-register
+  React.useEffect(() => {
+    if (loaded && dsn && !token) registerDsn(dsn);
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleSaveDsn(rawDsn: string) {
+    rawDsn = rawDsn.trim();
+    if (!rawDsn) { clearAll(); return; }
+    setDsn(rawDsn);
+    await registerDsn(rawDsn);
+  }
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [shareOpen, setShareOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
-  const [drawLayer, setDrawLayer] = React.useState<MapLayer | null>(null);
+  const [activeLayerId, setActiveLayerId] = React.useState<string | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
   const [basemap, setBasemap] = React.useState("liberty");
   const [customBasemaps, setCustomBasemaps] = React.useState<BasemapDef[]>(() => loadCustomBasemaps());
@@ -90,6 +116,13 @@ export default function Home() {
     if (loaded && !dsn) setLayers([]);
   }, [dsn, loaded]);
 
+  // Keep layer tokens in sync — when the token changes (first load, re-register),
+  // patch all layers so their dsn field holds the current token.
+  React.useEffect(() => {
+    if (!token) return;
+    setLayers((prev) => prev.map((l) => ({ ...l, dsn: token })));
+  }, [token]);
+
   // Persist whenever layers change — guard with loaded+dsn so we never
   // save before the DSN is known or while disconnected.
   React.useEffect(() => {
@@ -101,14 +134,21 @@ export default function Home() {
     const key = `${table.table_schema}.${table.table_name}`;
     if (layers.some((l) => `${l.table.table_schema}.${l.table.table_name}` === key)) return;
     const color = LAYER_COLORS[layers.length % LAYER_COLORS.length];
+    const geomType = (table.geom_type ?? "").toLowerCase();
+    const isLine = geomType.includes("linestring") || geomType.includes("multiline");
     setLayers((prev) => [
       ...prev,
       {
         id: crypto.randomUUID(),
         table,
-        dsn,
+        dsn: token,
         visible: true,
-        style: { ...DEFAULT_STYLE, color },
+        style: {
+          ...DEFAULT_STYLE,
+          color,
+          strokeColor: isLine ? color : "#ffffff",
+          lineWidth: isLine ? 2 : 1,
+        },
         filters: [],
       },
     ]);
@@ -165,8 +205,8 @@ export default function Home() {
           onClick={() => setSettingsOpen(true)}
           title="Connection settings"
         >
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-500"}`} />
-          <span className="truncate max-w-xs">
+          <span suppressHydrationWarning className={`w-1.5 h-1.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-500"}`} />
+          <span suppressHydrationWarning className="truncate max-w-xs">
             {dsn ? dbLabel(dsn) : "NOT CONNECTED"}
           </span>
         </button>
@@ -192,15 +232,14 @@ export default function Home() {
 
       <div className="flex overflow-hidden">
         <TableSidebar
-          dsn={dsn}
+          dsn={token}
           layers={layers}
           onAddLayer={addLayer}
           onRemoveLayer={removeLayer}
           onUpdateLayer={updateLayer}
           onReorderLayers={reorderLayers}
-          drawLayerId={drawLayer?.id ?? null}
-          onStartDraw={setDrawLayer}
-          onStopDraw={() => setDrawLayer(null)}
+          activeLayerId={activeLayerId}
+          onActiveLayerChange={setActiveLayerId}
           onZoomToLayer={zoomToLayer}
           onOpenSettings={() => setSettingsOpen(true)}
           basemap={basemap}
@@ -212,9 +251,10 @@ export default function Home() {
         <div className="flex-1 relative">
           <MaplibreMap
             layers={layers}
-            drawLayer={drawLayer}
-            onCancelDraw={() => setDrawLayer(null)}
+            activeLayerId={activeLayerId}
+            onActiveLayerChange={setActiveLayerId}
             onLayerDataChanged={onLayerDataChanged}
+            flyTo={zoomTarget}
             basemap={basemap}
             customBasemaps={customBasemaps}
           />
@@ -225,8 +265,8 @@ export default function Home() {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         dsn={dsn}
-        onSave={setDsn}
-        onDisconnect={() => setDsn("")}
+        onSave={handleSaveDsn}
+        onDisconnect={() => { clearAll(); }}
       />
       <ShareDialog
         open={shareOpen}

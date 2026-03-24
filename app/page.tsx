@@ -11,7 +11,11 @@ export default function LandingPage() {
       {/* Nav */}
       <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur-sm">
         <div className="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
-          <span className="font-semibold tracking-tight">PostGIS Frontend</span>
+          <span className="flex items-center gap-2 font-semibold tracking-tight">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/favicon.ico" alt="" className="w-5 h-5 shrink-0" />
+            PostGIS Frontend
+          </span>
           <div className="flex items-center gap-2">
             <ModeToggle />
             <Button asChild size="sm">
@@ -34,9 +38,10 @@ export default function LandingPage() {
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
           The Interface PostGIS Deserves
         </h1>
-        <p className="mt-5 text-lg text-muted-foreground max-w-2xl mx-auto">
-          An open-source interface to connect to your PostGIS database, manage its tables, import files (.shp, .geojson, .gpkg), scrape feature servers, visualize and edit data, and share live map views—all from the browser.
+        <p className="mt-4 text-xl text-foreground/80 max-w-xl mx-auto font-medium">
+          Do more, faster with PostGIS. This is an open-source project to build PostGIS the dynamic interface it deserves.
         </p>
+
         <div className="mt-8 flex items-center justify-center gap-3">
           <Button asChild size="lg">
             <Link href="/map">Launch App</Link>

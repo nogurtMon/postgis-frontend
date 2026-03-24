@@ -6,13 +6,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Check, X } from "lucide-react";
+import { Pencil, Trash2, Check, X } from "lucide-react";
 
 interface ColumnInfo {
   column_name: string;
@@ -51,11 +47,6 @@ interface Props {
   onChanged?: () => void;
 }
 
-const ALLOWED_TYPES = [
-  "text", "integer", "bigint", "smallint", "numeric", "real", "double precision",
-  "boolean", "date", "timestamp", "timestamptz", "uuid", "jsonb", "json",
-];
-
 const VALID_IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChanged }: Props) {
@@ -64,15 +55,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
   const [triggers, setTriggers] = React.useState<TriggerInfo[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
-
-  // Add column state
-  const [addOpen, setAddOpen] = React.useState(false);
-  const [addName, setAddName] = React.useState("");
-  const [addType, setAddType] = React.useState("text");
-  const [addNotNull, setAddNotNull] = React.useState(false);
-  const [addDefault, setAddDefault] = React.useState("");
-  const [addLoading, setAddLoading] = React.useState(false);
-  const [addError, setAddError] = React.useState<string | null>(null);
 
   // Rename column state
   const [renamingCol, setRenamingCol] = React.useState<string | null>(null);
@@ -84,11 +66,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
   const [droppingCol, setDroppingCol] = React.useState<string | null>(null);
   const [dropLoading, setDropLoading] = React.useState(false);
   const [dropError, setDropError] = React.useState<string | null>(null);
-
-  // Truncate state
-  const [truncateConfirm, setTruncateConfirm] = React.useState(false);
-  const [truncateLoading, setTruncateLoading] = React.useState(false);
-  const [truncateError, setTruncateError] = React.useState<string | null>(null);
 
   function loadInfo() {
     if (!dsn || !schema || !table) return;
@@ -113,10 +90,8 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
   React.useEffect(() => {
     if (open) {
       loadInfo();
-      setAddOpen(false);
       setRenamingCol(null);
       setDroppingCol(null);
-      setTruncateConfirm(false);
     }
   }, [open, dsn, schema, table]);
 
@@ -128,23 +103,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
-  }
-
-  async function handleAddColumn() {
-    if (!VALID_IDENT.test(addName)) { setAddError("Invalid column name"); return; }
-    setAddLoading(true);
-    setAddError(null);
-    try {
-      await alterColumn("add", { column: addName, type: addType, notNull: addNotNull, defaultValue: addDefault || null });
-      setAddOpen(false);
-      setAddName(""); setAddType("text"); setAddNotNull(false); setAddDefault("");
-      loadInfo();
-      onChanged?.();
-    } catch (e: any) {
-      setAddError(e.message);
-    } finally {
-      setAddLoading(false);
-    }
   }
 
   async function handleRenameColumn(column: string) {
@@ -175,26 +133,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
       setDropError(e.message);
     } finally {
       setDropLoading(false);
-    }
-  }
-
-  async function handleTruncate() {
-    setTruncateLoading(true);
-    setTruncateError(null);
-    try {
-      const res = await fetch("/api/pg/truncate-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dsn, schema, table }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setTruncateConfirm(false);
-      onChanged?.();
-    } catch (e: any) {
-      setTruncateError(e.message);
-    } finally {
-      setTruncateLoading(false);
     }
   }
 
@@ -246,9 +184,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
               {triggers.length > 0 && (
                 <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">{triggers.length}</Badge>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="danger" className="text-xs text-destructive data-[state=active]:text-destructive">
-              Danger
             </TabsTrigger>
           </TabsList>
 
@@ -378,75 +313,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
                 </tbody>
               </table>
             </ScrollArea>
-
-            {/* Add column */}
-            <div className="border-t pt-3 mt-3 shrink-0">
-              {!addOpen ? (
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAddOpen(true)}>
-                  <Plus className="h-3 w-3 mr-1" /> Add column
-                </Button>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-xs font-medium">Add column</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Name</Label>
-                      <Input
-                        value={addName}
-                        onChange={(e) => setAddName(e.target.value)}
-                        className="h-7 text-xs font-mono"
-                        placeholder="column_name"
-                        autoFocus
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Type</Label>
-                      <Select value={addType} onValueChange={setAddType}>
-                        <SelectTrigger className="h-7 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ALLOWED_TYPES.map((t) => (
-                            <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Default value</Label>
-                      <Input
-                        value={addDefault}
-                        onChange={(e) => setAddDefault(e.target.value)}
-                        className="h-7 text-xs"
-                        placeholder="optional"
-                      />
-                    </div>
-                    <div className="flex items-end pb-0.5">
-                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={addNotNull}
-                          onChange={(e) => setAddNotNull(e.target.checked)}
-                          className="h-3.5 w-3.5"
-                        />
-                        <span className="text-xs text-muted-foreground">NOT NULL</span>
-                      </label>
-                    </div>
-                  </div>
-                  {addError && <p className="text-xs text-destructive">{addError}</p>}
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs" disabled={addLoading} onClick={handleAddColumn}>
-                      {addLoading ? "Adding…" : "Add column"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setAddOpen(false); setAddError(null); }}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
           </TabsContent>
 
           {/* INDEXES */}
@@ -514,47 +380,6 @@ export function TableInfoDialog({ open, onOpenChange, dsn, schema, table, onChan
                 </div>
               )}
             </ScrollArea>
-          </TabsContent>
-
-          {/* DANGER */}
-          <TabsContent value="danger" className="mt-0 px-5 pb-5 pt-4">
-            <div className="rounded-md border border-destructive/30 p-4 space-y-3">
-              <div>
-                <p className="text-sm font-semibold">Truncate table</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Deletes all rows from <span className="font-mono">{schema}.{table}</span> but keeps the table structure.
-                  This cannot be undone.
-                </p>
-              </div>
-              {!truncateConfirm ? (
-                <Button
-                  size="sm" variant="destructive" className="h-7 text-xs"
-                  onClick={() => setTruncateConfirm(true)}
-                >
-                  Truncate table
-                </Button>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-destructive">Are you sure? All rows will be deleted.</p>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm" variant="destructive" className="h-7 text-xs"
-                      disabled={truncateLoading}
-                      onClick={handleTruncate}
-                    >
-                      {truncateLoading ? "Truncating…" : "Yes, truncate"}
-                    </Button>
-                    <Button
-                      size="sm" variant="ghost" className="h-7 text-xs"
-                      onClick={() => { setTruncateConfirm(false); setTruncateError(null); }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                  {truncateError && <p className="text-xs text-destructive">{truncateError}</p>}
-                </div>
-              )}
-            </div>
           </TabsContent>
         </Tabs>
       </DialogContent>

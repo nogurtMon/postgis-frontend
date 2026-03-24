@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { getPool } from "@/lib/pool";
+import { resolveDsn } from "@/lib/resolve-dsn";
 
 // Safe because all identifiers are pre-validated against VALID_IDENT before use
 function ident(...parts: string[]) {
   return parts.map((p) => `"${p.replace(/"/g, '""')}"`).join(".");
 }
 
-const pools = new Map<string, Pool>();
-function getPool(dsn: string) {
-  if (!pools.has(dsn)) pools.set(dsn, new Pool({ connectionString: dsn, max: 5 }));
-  return pools.get(dsn)!;
-}
 
 const VALID_IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const VALID_GEOM_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "Geometry"];
 
 export async function POST(req: NextRequest) {
-  const { dsn, schema, table, geomType, srid, columns, timestamps } = await req.json();
-
-  if (!dsn?.startsWith("postgres"))
-    return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+  const { dsn: dsnToken, schema, table, geomType, srid, columns, timestamps } = await req.json();
+  let dsn: string;
+  try { dsn = resolveDsn(dsnToken); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
   if (!VALID_IDENT.test(schema) || !VALID_IDENT.test(table))
     return NextResponse.json({ error: "Invalid schema or table name. Use letters, numbers, and underscores only." }, { status: 400 });
   if (!VALID_GEOM_TYPES.includes(geomType))

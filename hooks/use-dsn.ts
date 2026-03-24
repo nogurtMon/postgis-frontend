@@ -2,13 +2,22 @@
 import { useState, useEffect } from "react";
 
 const DSN_KEY = "pg_dsn";
+const TOKEN_KEY = "pg_dsn_token";
+
+function readLS(key: string) {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(key) ?? "";
+}
 
 export function useDsn() {
-  const [dsn, setDsnState] = useState<string>("");
+  const [dsn, setDsnState] = useState<string>(() => readLS(DSN_KEY));
+  const [token, setTokenState] = useState<string>(() => readLS(TOKEN_KEY));
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    setDsnState(localStorage.getItem(DSN_KEY) ?? "");
+    // Re-read on mount in case SSR returned empty strings
+    setDsnState(readLS(DSN_KEY));
+    setTokenState(readLS(TOKEN_KEY));
     setLoaded(true);
   }, []);
 
@@ -18,5 +27,18 @@ export function useDsn() {
     else localStorage.removeItem(DSN_KEY);
   }
 
-  return { dsn, setDsn, loaded };
+  function setToken(value: string) {
+    setTokenState(value);
+    if (value) localStorage.setItem(TOKEN_KEY, value);
+    else localStorage.removeItem(TOKEN_KEY);
+  }
+
+  function clearAll() {
+    setDsnState("");
+    setTokenState("");
+    localStorage.removeItem(DSN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+  }
+
+  return { dsn, token, setDsn, setToken, clearAll, loaded };
 }

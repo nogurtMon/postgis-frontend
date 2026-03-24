@@ -19,6 +19,7 @@
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tmcw/togeojson": "^7.1.2",
     "@types/mapbox-gl": "^3.4.1",
     "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "^0.7.1",
@@ -38,6 +39,7 @@
     "react-dom": "19.1.0",
     "react-map-gl": "^8.0.4",
     "shapefile": "^0.6.6",
+    "shpjs": "^6.2.0",
     "sql.js": "^1.14.1",
     "tailwind-merge": "^3.3.1"
   },

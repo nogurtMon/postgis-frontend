@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { getPool } from "@/lib/pool";
+import { resolveDsn } from "@/lib/resolve-dsn";
 
-const pools = new Map<string, Pool>();
-function getPool(dsn: string) {
-  if (!pools.has(dsn)) pools.set(dsn, new Pool({ connectionString: dsn, max: 5 }));
-  return pools.get(dsn)!;
-}
 
 // UpdateGeometrySRID only updates the SRID metadata — it does NOT reproject coordinates.
 // Use this when the data is already in the target CRS but was imported without an SRID label.
 export async function POST(req: NextRequest) {
-  const { dsn, schema, table, geomCol, srid } = await req.json();
-
-  if (!dsn?.startsWith("postgres"))
-    return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+  const { dsn: dsnToken, schema, table, geomCol, srid } = await req.json();
+  let dsn: string;
+  try { dsn = resolveDsn(dsnToken); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
 
   const sridNum = parseInt(srid);
   if (isNaN(sridNum))

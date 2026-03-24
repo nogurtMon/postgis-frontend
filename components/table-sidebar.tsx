@@ -7,8 +7,6 @@ import { DeleteTableDialog } from "@/components/delete-table-dialog";
 import { RenameTableDialog } from "@/components/rename-table-dialog";
 import { AttributeTableDialog } from "@/components/attribute-table-dialog";
 import { TableInfoDialog } from "@/components/table-info-dialog";
-import { ImportDialog } from "@/components/import-dialog";
-import { FeatureServerDialog } from "@/components/feature-server-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,9 +28,8 @@ interface Props {
   onRemoveLayer: (id: string) => void;
   onUpdateLayer: (id: string, patch: Partial<MapLayer>) => void;
   onReorderLayers: (newOrder: string[]) => void;
-  drawLayerId?: string | null;
-  onStartDraw?: (layer: MapLayer) => void;
-  onStopDraw?: () => void;
+  activeLayerId?: string | null;
+  onActiveLayerChange?: (id: string | null) => void;
   onZoomToLayer?: (layer: MapLayer) => void;
   onZoomToTable?: (table: TableRow) => void;
   onOpenSettings?: () => void;
@@ -41,6 +38,23 @@ interface Props {
   customBasemaps: BasemapDef[];
   onAddCustomBasemap: (b: BasemapDef) => void;
   onRemoveCustomBasemap: (key: string) => void;
+}
+
+// ─── connection error helper ─────────────────────────────────────────────────
+function friendlyConnError(msg: string): { title: string; detail: string } {
+  if (/ETIMEDOUT|timeout|timed out/i.test(msg))
+    return { title: "Connection timed out", detail: "If your database requires IP allowlisting, make sure this server's IP address is added to the allowlist." };
+  if (/ssl.*required|no pg_hba|SSL SYSCALL|SSL connection/i.test(msg))
+    return { title: "SSL required", detail: "Add sslmode=require to your connection string and try again." };
+  if (/ECONNREFUSED/i.test(msg))
+    return { title: "Connection refused", detail: "Check that the host and port are correct and the database server is running." };
+  if (/password authentication failed/i.test(msg))
+    return { title: "Authentication failed", detail: "The username or password in your connection string is incorrect." };
+  if (/database .* does not exist/i.test(msg))
+    return { title: "Database not found", detail: "Check that the database name in your connection string is correct." };
+  if (/ENOTFOUND|getaddrinfo/i.test(msg))
+    return { title: "Host not found", detail: "The hostname in your connection string could not be resolved. Check for typos." };
+  return { title: "Connection error", detail: msg };
 }
 
 // ─── filter helpers ──────────────────────────────────────────────────────────
@@ -441,8 +455,8 @@ function LayerFilterEditor({
       body: JSON.stringify({ dsn, schema: layer.table.table_schema, table: layer.table.table_name }),
     })
       .then((r) => r.json())
-      .then((data) => { if (data.columns) setColumns(data.columns); })
-      .catch(() => {});
+      .then((data) => { if (data.columns) setColumns(data.columns); else console.error("[columns]", data.error); })
+      .catch((e) => console.error("[columns fetch]", e));
   }, [dsn, layer.table.table_schema, layer.table.table_name]);
 
   const nonGeomCols = columns.filter((c) => !c.isGeom);
@@ -478,7 +492,7 @@ function LayerFilterEditor({
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-muted-foreground w-6 shrink-0 text-right">{i === 0 ? "if" : "and"}</span>
               <Select value={f.column} onValueChange={(col) => { apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, column: col, value: "" } : fi)); setDrafts((p) => ({ ...p, [f.id]: "" })); }}>
-                <SelectTrigger className="h-6 text-[11px] flex-1 min-w-0 font-mono">
+                <SelectTrigger className="h-6 text-[11px] flex-1 min-w-0 font-mono overflow-hidden [&>span]:truncate">
                   <SelectValue placeholder="column" />
                 </SelectTrigger>
                 <SelectContent>
@@ -540,7 +554,7 @@ function LayerFilterEditor({
 export function TableSidebar({
   dsn, layers,
   onAddLayer, onRemoveLayer, onUpdateLayer, onReorderLayers,
-  drawLayerId, onStartDraw, onStopDraw, onZoomToLayer, onZoomToTable, onOpenSettings,
+  activeLayerId, onActiveLayerChange, onZoomToLayer, onZoomToTable, onOpenSettings,
   basemap, onBasemapChange,
   customBasemaps, onAddCustomBasemap, onRemoveCustomBasemap,
 }: Props) {
@@ -586,8 +600,6 @@ export function TableSidebar({
   const [castLoading, setCastLoading] = React.useState(false);
   const [castError, setCastError] = React.useState<string | null>(null);
 
-  const [importOpen, setImportOpen] = React.useState(false);
-  const [featureServerOpen, setFeatureServerOpen] = React.useState(false);
   const [connectionOpen, setConnectionOpen] = React.useState(false);
   const [basemapOpen, setBasemapOpen] = React.useState(false);
   const [addingBasemap, setAddingBasemap] = React.useState(false);
@@ -706,7 +718,7 @@ export function TableSidebar({
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
-        setTables(data.tables);
+        setTables(data.tables ?? []);
         // Collapse all schemas by default
         const allSchemas = new Set<string>(data.tables.map((t: any) => t.table_schema));
         setCollapsed(allSchemas);
@@ -788,7 +800,12 @@ export function TableSidebar({
 
           {!dsn && <p className="pl-8 py-2 text-xs text-muted-foreground/60">Right-click to connect…</p>}
           {loading && <p className="pl-8 py-1.5 text-xs text-muted-foreground">Loading…</p>}
-          {error && <p className="pl-8 py-1.5 text-xs text-destructive break-words">{error}</p>}
+          {error && (() => { const { title, detail } = friendlyConnError(error); return (
+            <div className="mx-3 my-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 space-y-0.5">
+              <p className="text-xs font-medium text-destructive">{title}</p>
+              <p className="text-xs text-muted-foreground">{detail}</p>
+            </div>
+          ); })()}
 
           {dsn && !loading && !error && (
             <>
@@ -986,6 +1003,19 @@ export function TableSidebar({
                   </div>
                 );
               })}
+              {/* Empty states — only shown when the connection section is expanded */}
+              {connectionOpen && !loading && tables.length === 0 && (
+                <div className="pl-8 pr-3 py-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">No tables found in this database.</p>
+                  <p className="text-xs text-muted-foreground/60">Create a table or import data to get started.</p>
+                </div>
+              )}
+              {connectionOpen && !loading && tables.length > 0 && spatialTables.length === 0 && (
+                <div className="pl-8 pr-3 py-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">{tables.length} table{tables.length !== 1 ? "s" : ""} found, but none have a geometry column.</p>
+                  <p className="text-xs text-muted-foreground/60">Import spatial data or add a PostGIS geometry column to get started.</p>
+                </div>
+              )}
             </>
           )}
 
@@ -1124,7 +1154,7 @@ export function TableSidebar({
             return (
               <div
                 key={layer.id}
-                className={`border-b select-none ${isDragOver ? "border-t-2 border-t-primary" : ""} ${dragId === layer.id ? "opacity-40" : ""}`}
+                className={`border-b select-none ${isDragOver ? "border-t-2 border-t-primary" : ""} ${dragId === layer.id ? "opacity-40" : ""} ${activeLayerId === layer.id ? "bg-primary/5 border-l-2 border-l-primary" : ""}`}
                 draggable
                 onDragStart={() => setDragId(layer.id)}
                 onDragEnd={() => { setDragId(null); setDragOverId(null); }}
@@ -1152,7 +1182,9 @@ export function TableSidebar({
                       })}
                     />
                   </label>
-                  <span className="flex-1 flex items-center gap-1 min-w-0 overflow-hidden">
+                  <span
+                    className="flex-1 flex items-center gap-1 min-w-0 overflow-hidden"
+                  >
                     <span className="flex flex-col min-w-0">
                       <span className="text-xs truncate font-medium leading-tight">{layer.table.table_name}</span>
                       {layer.table.table_schema !== "public" && (
@@ -1298,20 +1330,6 @@ export function TableSidebar({
         onCreated={() => setRefreshKey((k) => k + 1)}
         defaultSchema={createDefaultSchema}
       />
-      <ImportDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        dsn={dsn}
-        schemas={[...new Set(tables.map(t => t.table_schema))].filter(Boolean).sort()}
-        onImported={() => setRefreshKey((k) => k + 1)}
-      />
-      <FeatureServerDialog
-        open={featureServerOpen}
-        onOpenChange={setFeatureServerOpen}
-        dsn={dsn}
-        schemas={[...new Set(tables.map(t => t.table_schema))].filter(Boolean).sort()}
-        onImported={() => setRefreshKey((k) => k + 1)}
-      />
       {renameTarget && (
         <RenameTableDialog
           open={!!renameTarget}
@@ -1344,6 +1362,10 @@ export function TableSidebar({
           table={attrTableLayer.table.table_name}
           filters={attrTableLayer.filters}
           onFiltersChange={(filters) => onUpdateLayer(attrTableLayer.id, { filters })}
+          onDataChanged={() => {
+            const current = layers.find((l) => l.id === attrTableLayer.id);
+            if (current) onUpdateLayer(current.id, { dataVersion: (current.dataVersion ?? 0) + 1 });
+          }}
         />
       )}
       {deleteTarget && (
@@ -1376,12 +1398,6 @@ export function TableSidebar({
                 <>
                   <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setCreateOpen(true); setContextMenu(null); }}>
                     Create table
-                  </button>
-                  <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setImportOpen(true); setContextMenu(null); }}>
-                    Import file…
-                  </button>
-                  <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setFeatureServerOpen(true); setContextMenu(null); }}>
-                    Scrape feature server…
                   </button>
                   <button className="w-full text-left px-3 py-1.5 hover:bg-muted" onClick={() => { setRefreshKey((k) => k + 1); setContextMenu(null); }}>
                     Refresh
@@ -1534,8 +1550,6 @@ export function TableSidebar({
       {layerCtx && (() => {
         const layer = layers.find((l) => l.id === layerCtx.layerId);
         if (!layer) return null;
-        const lgt = (layer.geomTypeOverride ?? layer.table.geom_type ?? "").toLowerCase();
-        const lIsPoint = !lgt.includes("linestring") && !lgt.includes("polygon");
         const isStyleOpen = expandedLayer === layer.id && expandedSection === "style";
         const isFiltersOpen = expandedLayer === layer.id && expandedSection === "filters";
         return (
@@ -1564,17 +1578,6 @@ export function TableSidebar({
               <button className="w-full text-left px-3 py-1.5 hover:bg-muted"
                 onClick={() => { onZoomToLayer(layer); setLayerCtx(null); }}>
                 <Maximize2 className="inline h-3 w-3 mr-1.5 mb-0.5" />Zoom to extent
-              </button>
-            )}
-            {lIsPoint && onStartDraw && (
-              <button className="w-full text-left px-3 py-1.5 hover:bg-muted"
-                onClick={() => {
-                  if (drawLayerId === layer.id) onStopDraw?.();
-                  else onStartDraw(layer);
-                  setLayerCtx(null);
-                }}>
-                <MapPin className="inline h-3 w-3 mr-1.5 mb-0.5" />
-                {drawLayerId === layer.id ? "Cancel drawing" : "Add point"}
               </button>
             )}
             <div className="border-t my-1" />

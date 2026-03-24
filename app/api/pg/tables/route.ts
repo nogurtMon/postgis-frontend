@@ -1,16 +1,14 @@
 // app/api/pg/tables/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { getPool } from "@/lib/pool";
+import { resolveDsn } from "@/lib/resolve-dsn";
 
-const pools = new Map<string, Pool>();
-function getPool(dsn: string) {
-  if (!pools.has(dsn)) pools.set(dsn, new Pool({ connectionString: dsn, max: 5 }));
-  return pools.get(dsn)!;
-}
 
 export async function POST(req: NextRequest) {
-  const { dsn } = await req.json();
-  if (!dsn?.startsWith("postgres")) return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+  const { dsn: dsnToken } = await req.json();
+  let dsn: string;
+  try { dsn = resolveDsn(dsnToken); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
   const pool = getPool(dsn);
   // Query pg_catalog directly — more reliable than information_schema for PostGIS types.
   // Returns only tables that have at least one geometry/geography column.

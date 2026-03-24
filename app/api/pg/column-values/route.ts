@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { getPool } from "@/lib/pool";
+import { resolveDsn } from "@/lib/resolve-dsn";
 
 function ident(name: string) {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-const pools = new Map<string, Pool>();
-function getPool(dsn: string) {
-  if (!pools.has(dsn)) pools.set(dsn, new Pool({ connectionString: dsn, max: 5 }));
-  return pools.get(dsn)!;
-}
 
 // If a column has more than this many distinct values, the UI switches from
 // multi-select to a text-contains input.
 const DISTINCT_LIMIT = 100;
 
 export async function POST(req: NextRequest) {
-  const { dsn, schema, table, column } = await req.json();
-
-  if (!dsn?.startsWith("postgres"))
-    return NextResponse.json({ error: "Bad DSN" }, { status: 400 });
+  const { dsn: dsnToken, schema, table, column } = await req.json();
+  let dsn: string;
+  try { dsn = resolveDsn(dsnToken); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
 
   const pool = getPool(dsn);
   let client;
