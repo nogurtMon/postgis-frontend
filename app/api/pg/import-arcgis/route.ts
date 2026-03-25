@@ -15,7 +15,7 @@ function qi(name: string) {
 const INSERT_BATCH = 500;
 
 export async function POST(req: NextRequest) {
-  const { dsn: dsnToken, schema, table, layerUrl, outFields, columns, batchSize: batchSizeParam, startOffset: startOffsetParam } = await req.json();
+  const { dsn: dsnToken, schema, table, layerUrl, outFields, columns, batchSize: batchSizeParam, startOffset: startOffsetParam, maxBatches: maxBatchesParam } = await req.json();
 
   let dsn: string;
   try { dsn = resolveDsn(dsnToken); }
@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
 
   const fetchBatchSize = Math.min(parseInt(batchSizeParam ?? "2000") || 2000, 2000);
   const startOffset = Math.max(0, parseInt(startOffsetParam ?? "0") || 0);
+  // maxBatches caps how many fetch-insert cycles this call performs.
+  // The client will automatically continue from nextOffset if this is reached.
+  // Default 10 batches × 2000 rows = ~20k rows per call — safe within Vercel's 60s free tier limit.
+  const maxBatches = Math.max(1, parseInt(maxBatchesParam ?? "10") || 10);
 
   const encoder = new TextEncoder();
 
@@ -108,6 +112,7 @@ export async function POST(req: NextRequest) {
 
       try {
         let done = startOffset;
+        let batchCount = 0;
         // Pipeline: start fetching next batch while current is being inserted
         let nextFetch = fetchBatch(startOffset);
         for (let offset = startOffset; ; offset += fetchBatchSize) {
@@ -118,11 +123,20 @@ export async function POST(req: NextRequest) {
 
           const inserted = await insertFeatures(features);
           done += inserted;
+          batchCount++;
           const nextOffset = offset + fetchBatchSize;
           send({ type: "progress", done, total: Math.max(total, done), nextOffset });
+
           if (isLast) break;
+
+          // Reached the per-call batch limit — send a checkpoint so the client
+          // can start a new request and we exit before hitting a server timeout.
+          if (batchCount >= maxBatches) {
+            send({ type: "checkpoint", done, total: Math.max(total, done), nextOffset });
+            break;
+          }
         }
-        send({ type: "done", done });
+        if (batchCount < maxBatches) send({ type: "done", done });
       } catch (e: any) {
         send({ type: "error", message: e.message ?? "Import failed" });
       } finally {

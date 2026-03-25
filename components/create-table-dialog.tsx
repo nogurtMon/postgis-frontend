@@ -449,70 +449,87 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const importAbort = new AbortController();
     (abortRef as any).cancel = () => importAbort.abort();
 
-    let res: Response;
-    try {
-      res = await fetch("/api/pg/import-arcgis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dsn,
-          schema: arcSchema,
-          table: arcTable,
-          layerUrl,
-          outFields,
-          columns: includedCols.map((c) => ({ origName: c.origName, pgName: c.pgName })),
-          batchSize: Math.min(arcMeta.maxRecordCount, 2000),
-          startOffset,
-        }),
-        signal: importAbort.signal,
-      });
-    } catch (e: any) {
-      if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
-      setArcError(e.message ?? "Import failed"); setArcPhase("error"); return;
-    }
+    const basePayload = {
+      dsn,
+      schema: arcSchema,
+      table: arcTable,
+      layerUrl,
+      outFields,
+      columns: includedCols.map((c) => ({ origName: c.origName, pgName: c.pgName })),
+      batchSize: Math.min(arcMeta.maxRecordCount, 2000),
+    };
 
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setArcError(d.error ?? "Import failed"); setArcPhase("error"); return;
-    }
+    // Loop over server chunks — each call processes maxBatches fetch-insert cycles,
+    // then sends a "checkpoint" so we start a new call rather than timeout.
+    let chunkOffset = startOffset;
+    while (true) {
+      if (importAbort.signal.aborted) { setArcPhase("cancelled"); return; }
 
-    // Read NDJSON stream
-    const reader = res.body!.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    let completed = false;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let msg: any;
-          try { msg = JSON.parse(line); } catch { continue; }
-          if (msg.type === "progress") {
-            setArcProgress({ done: msg.done, total: msg.total });
-            if (msg.nextOffset != null) arcNextOffsetRef.current = msg.nextOffset;
-          } else if (msg.type === "done") {
-            setArcProgress((p) => ({ ...p, done: msg.done }));
-            completed = true;
-            setArcPhase("done");
-            onCreated();
-            return;
-          } else if (msg.type === "error") {
-            setArcError(msg.message ?? "Import failed");
-            setArcPhase("error");
-            return;
+      let res: Response;
+      try {
+        res = await fetch("/api/pg/import-arcgis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...basePayload, startOffset: chunkOffset }),
+          signal: importAbort.signal,
+        });
+      } catch (e: any) {
+        if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
+        setArcError(e.message ?? "Import failed"); setArcPhase("error"); return;
+      }
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setArcError(d.error ?? "Import failed"); setArcPhase("error"); return;
+      }
+
+      // Read NDJSON stream for this chunk
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let chunkDone = false;
+      try {
+        outer: while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let msg: any;
+            try { msg = JSON.parse(line); } catch { continue; }
+            if (msg.type === "progress") {
+              setArcProgress({ done: msg.done, total: msg.total });
+              if (msg.nextOffset != null) arcNextOffsetRef.current = msg.nextOffset;
+            } else if (msg.type === "checkpoint") {
+              // Server finished its chunk — continue from nextOffset automatically
+              setArcProgress({ done: msg.done, total: msg.total });
+              chunkOffset = msg.nextOffset;
+              chunkDone = true;
+              break outer;
+            } else if (msg.type === "done") {
+              setArcProgress((p) => ({ ...p, done: msg.done }));
+              setArcPhase("done");
+              onCreated();
+              return;
+            } else if (msg.type === "error") {
+              setArcError(msg.message ?? "Import failed");
+              setArcPhase("error");
+              return;
+            }
           }
         }
+      } catch (e: any) {
+        if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
+        // Unexpected stream error — show interrupted so user can resume manually
+        setArcPhase("interrupted");
+        return;
       }
-    } catch (e: any) {
-      if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
+
+      // Stream closed without checkpoint or done — genuine timeout/disconnect
+      if (!chunkDone) { setArcPhase("interrupted"); return; }
     }
-    // Stream closed without a "done" message — server timed out or connection dropped
-    if (!completed) setArcPhase("interrupted");
   }
 
   async function dropArcTable() {
