@@ -128,7 +128,7 @@ export default function MaplibreMap({
           id: `layer-${layer.id}`,
           data: tileUrl,
           minZoom: 0,
-          maxZoom: 20,
+          maxZoom: 14,
           refinementStrategy: "best-available",
           pickable: true,
           autoHighlight: true,
