@@ -1135,7 +1135,7 @@ export function TableSidebar({
                     className="flex-1 flex items-center gap-1 min-w-0 overflow-hidden"
                   >
                     <span className="flex flex-col min-w-0">
-                      <span className="text-xs truncate font-medium leading-tight">{layer.table.table_name}</span>
+                      <span className="text-xs truncate font-medium leading-tight max-w-50">{layer.table.table_name}</span>
                       {layer.table.table_schema !== "public" && (
                         <span className="text-[10px] text-muted-foreground truncate leading-tight">{layer.table.table_schema}</span>
                       )}
