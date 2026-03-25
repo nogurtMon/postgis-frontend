@@ -330,6 +330,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   const [arcProgress, setArcProgress] = React.useState({ done: 0, total: 0 });
   const [arcError, setArcError] = React.useState("");
   const abortRef = React.useRef(false);
+  const arcStartTimeRef = React.useRef(0);
 
   // ── File import state ─────────────────────────────────────────────────────
   const [filePhase, setFilePhase] = React.useState<FilePhase>("idle");
@@ -387,9 +388,14 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   async function startArcImport() {
     if (!arcMeta) return;
     abortRef.current = false;
+    arcStartTimeRef.current = Date.now();
     setArcPhase("importing");
     setArcProgress({ done: 0, total: arcMeta.count });
+
     const includedCols = arcColMappings.filter((c) => c.include);
+    const outFields = includedCols.map((c) => c.origName).join(",") || "*";
+
+    // Create table first
     const createRes = await fetch("/api/pg/create-table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -398,46 +404,71 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const createData = await createRes.json();
     if (!createRes.ok) { setArcError(createData.error ?? "Failed to create table"); setArcPhase("error"); return; }
 
+    // Server-side import: ArcGIS → server → Postgres, streamed NDJSON progress
     const layerUrl = normalizeLayerUrl(arcUrl);
-    let allIds: number[] = [];
+    const importAbort = new AbortController();
+    // Store abort fn so cancel button can reach it
+    (abortRef as any).cancel = () => importAbort.abort();
+
+    let res: Response;
     try {
-      const j = await arcFetch(`${layerUrl}/query?where=1%3D1&returnIdsOnly=true&f=json`);
-      if (j.error) throw new Error(j.error.message ?? "Failed to fetch object IDs");
-      allIds = j.objectIds ?? [];
-    } catch (e: any) { setArcError(e.message ?? "Failed to fetch object IDs"); setArcPhase("error"); return; }
-
-    setArcProgress({ done: 0, total: allIds.length });
-    const batchSize = Math.min(arcMeta.maxRecordCount, 100);
-    for (let i = 0; i < allIds.length; i += batchSize) {
-      if (abortRef.current) { setArcPhase("cancelled"); return; }
-      const batchIds = allIds.slice(i, i + batchSize);
-      let features: any[];
-      try {
-        const geoJson = await arcFetch(`${layerUrl}/query?objectIds=${batchIds.join(",")}&outFields=*&f=geojson`);
-        if (geoJson.error) throw new Error(geoJson.error.message ?? "ArcGIS query error");
-        features = geoJson.features ?? [];
-      } catch (e: any) { setArcError(e.message ?? "Failed to fetch features"); setArcPhase("error"); return; }
-
-      const rows = features.filter((f: any) => f.geometry != null).map((f: any) => {
-        const attrs: Record<string, any> = {};
-        for (const col of includedCols) {
-          const val = f.properties?.[col.origName];
-          attrs[col.pgName] = val == null ? null : String(val);
-        }
-        return { geomJson: JSON.stringify(f.geometry), attrs };
+      res = await fetch("/api/pg/import-arcgis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dsn,
+          schema: arcSchema,
+          table: arcTable,
+          layerUrl,
+          outFields,
+          columns: includedCols.map((c) => ({ origName: c.origName, pgName: c.pgName })),
+          batchSize: Math.min(arcMeta.maxRecordCount, 2000),
+        }),
+        signal: importAbort.signal,
       });
-      if (rows.length > 0) {
-        const insertRes = await fetch("/api/pg/bulk-insert", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dsn, schema: arcSchema, table: arcTable, rows }),
-        });
-        const insertData = await insertRes.json();
-        if (!insertRes.ok) { setArcError(insertData.error ?? "Insert failed"); setArcPhase("error"); return; }
-      }
-      setArcProgress({ done: i + batchIds.length, total: allIds.length });
+    } catch (e: any) {
+      if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
+      setArcError(e.message ?? "Import failed"); setArcPhase("error"); return;
     }
-    setArcPhase("done");
-    onCreated();
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setArcError(d.error ?? "Import failed"); setArcPhase("error"); return;
+    }
+
+    // Read NDJSON stream
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg: any;
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.type === "progress") {
+            setArcProgress({ done: msg.done, total: msg.total });
+          } else if (msg.type === "done") {
+            setArcProgress((p) => ({ ...p, done: msg.done }));
+            setArcPhase("done");
+            onCreated();
+            return;
+          } else if (msg.type === "error") {
+            setArcError(msg.message ?? "Import failed");
+            setArcPhase("error");
+            return;
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
+      setArcError(e.message ?? "Stream error"); setArcPhase("error");
+    }
   }
 
   async function dropArcTable() {
@@ -446,6 +477,16 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   }
 
   const arcPct = arcProgress.total > 0 ? Math.round((arcProgress.done / arcProgress.total) * 100) : null;
+
+  function arcEta(): string {
+    const { done, total } = arcProgress;
+    if (done === 0 || total === 0 || arcStartTimeRef.current === 0) return "";
+    const elapsed = (Date.now() - arcStartTimeRef.current) / 1000;
+    const remaining = (total - done) / (done / elapsed);
+    if (remaining < 5) return "";
+    if (remaining < 60) return ` · ~${Math.round(remaining)}s left`;
+    return ` · ~${Math.ceil(remaining / 60)}m left`;
+  }
 
   // ── File import functions ─────────────────────────────────────────────────
 
@@ -579,13 +620,24 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                 </div>
               )}
 
+              {arcPhase === "ready" && arcColMappings.length > 10 && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                  This layer has <span className="font-semibold">{arcColMappings.length} fields</span>. Deselecting unused fields below will reduce payload size and speed up the import.
+                </div>
+              )}
+
               {arcPhase === "ready" && arcColMappings.length > 0 && (
                 <ColMappingTable mappings={arcColMappings} onChange={setArcColMappings} />
               )}
 
               {(arcPhase === "importing" || arcPhase === "cancelling") && (
-                <ProgressBar pct={arcPct} label={arcPhase === "cancelling" ? "Cancelling…" : "Importing…"}
-                  detail={`${arcProgress.done.toLocaleString()}${arcProgress.total > 0 ? ` / ${arcProgress.total.toLocaleString()}` : ""} features`} />
+                <>
+                  <ProgressBar pct={arcPct} label={arcPhase === "cancelling" ? "Cancelling…" : "Importing…"}
+                    detail={`${arcProgress.done.toLocaleString()}${arcProgress.total > 0 ? ` / ${arcProgress.total.toLocaleString()}` : ""} features${arcEta()}`} />
+                  <p className="text-xs text-muted-foreground text-center">
+                    You can switch tabs — do not close or refresh this browser tab.
+                  </p>
+                </>
               )}
 
               {arcPhase === "cancelled" && (
@@ -599,7 +651,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
 
               <div className="flex justify-end gap-2">
                 {arcPhase === "importing" && (
-                  <Button variant="outline" onClick={() => { abortRef.current = true; setArcPhase("cancelling"); }}>Cancel import</Button>
+                  <Button variant="outline" onClick={() => { (abortRef as any).cancel?.(); setArcPhase("cancelling"); }}>Cancel import</Button>
                 )}
                 {arcPhase === "cancelled" && (
                   <><Button variant="destructive" onClick={dropArcTable}>Drop table</Button>
