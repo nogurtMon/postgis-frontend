@@ -41,7 +41,6 @@ export async function GET(
   const table = searchParams.get("table");
   const geomCol = searchParams.get("geomCol") ?? "geom";
   const srid = parseInt(searchParams.get("srid") ?? "4326", 10);
-
   let dsn: string;
   try { dsn = resolveDsn(searchParams.get("dsn")); }
   catch { return NextResponse.json({ error: "Invalid token" }, { status: 400 }); }
@@ -132,8 +131,6 @@ export async function GET(
       ? `AND ${filterClauses.join(" AND ")}`
       : "";
 
-    // Below z8 features are sub-pixel — skip attributes to reduce PostGIS I/O and tile size.
-    const includeAttrs = z >= 8 && propCols.length > 0;
     const selectCols = propCols.map(qi).join(", ");
 
     // Transform the tile envelope to the geometry's native SRID for the WHERE filter.
@@ -143,21 +140,16 @@ export async function GET(
       ? `ST_TileEnvelope($2, $3, $4)`
       : `ST_Transform(ST_TileEnvelope($2, $3, $4), ${srid})`;
 
-    // Use a smaller tile extent at low zoom levels for free coordinate quantization.
-    // This collapses nearby vertices through the MVT grid itself — no extra PostGIS
-    // function calls, zero overhead. z<=6: 256, z<=10: 512, z<=13: 1024, z>13: 4096.
-    const tileExtent = z <= 6 ? 256 : z <= 10 ? 512 : z <= 13 ? 1024 : 4096;
-
     const sql = `
-      SELECT ST_AsMVT(tile, $1, ${tileExtent}, 'geom') AS mvt
+      SELECT ST_AsMVT(tile, $1, 4096, 'geom') AS mvt
       FROM (
         SELECT
           ST_AsMVTGeom(
             ST_Transform(${qi(geomCol)}, 3857),
             ST_TileEnvelope($2, $3, $4),
-            ${tileExtent}, 64, true
+            4096, 64, true
           ) AS geom
-          ${includeAttrs ? `, ${selectCols}` : ""}
+          ${propCols.length > 0 ? `, ${selectCols}` : ""}
         FROM ${qi(schema)}.${qi(table)}
         WHERE ${qi(geomCol)} && ${envelopeExpr}
           ${whereFilter}
@@ -170,13 +162,7 @@ export async function GET(
     return new NextResponse(new Uint8Array(mvt), {
       headers: {
         "Content-Type": "application/vnd.mapbox-vector-tile",
-        // Cache tiles in the browser for 5 minutes — re-validates if data version changes
-        // Low-zoom tiles are expensive to generate; cache longer since URLs are versioned.
-        "Cache-Control": z <= 6
-          ? "public, max-age=3600, stale-while-revalidate=300"
-          : z <= 10
-          ? "public, max-age=600, stale-while-revalidate=120"
-          : "public, max-age=300, stale-while-revalidate=60",
+        "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
       },
     });
   } catch (e: any) {

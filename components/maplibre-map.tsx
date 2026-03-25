@@ -95,6 +95,7 @@ export default function MaplibreMap({
   // ── selection / properties dialog
   const [selection, setSelection] = React.useState<Selection | null>(null);
   const [isPropsOpen, setIsPropsOpen] = React.useState(false);
+  const [zoom, setZoom] = React.useState(4);
 
   // ── DeckGL overlay (stable reference)
   const overlay = React.useMemo(() => new MapboxOverlay({ interleaved: false }), []);
@@ -242,10 +243,15 @@ export default function MaplibreMap({
       <Map
         ref={mapRef}
         onLoad={onLoad}
+        onZoom={(e) => setZoom(e.viewState.zoom)}
         initialViewState={{ longitude: -98.5556199, latitude: 39.8097343, zoom: 4 }}
         style={{ width: "100%", height: "100%" }}
         mapStyle={resolveBasemapStyle()}
       />
+
+      <div className="absolute bottom-8 right-2 z-10 pointer-events-none bg-black/50 text-white text-xs font-mono px-1.5 py-0.5 rounded">
+        z{zoom.toFixed(1)}
+      </div>
 
       <GeocoderControl
         onSelect={(lng, lat, zoom) => {
