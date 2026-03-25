@@ -15,7 +15,7 @@ function qi(name: string) {
 const INSERT_BATCH = 500;
 
 export async function POST(req: NextRequest) {
-  const { dsn: dsnToken, schema, table, layerUrl, outFields, columns, batchSize: batchSizeParam } = await req.json();
+  const { dsn: dsnToken, schema, table, layerUrl, outFields, columns, batchSize: batchSizeParam, startOffset: startOffsetParam } = await req.json();
 
   let dsn: string;
   try { dsn = resolveDsn(dsnToken); }
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Invalid layer URL" }, { status: 400 });
 
   const fetchBatchSize = Math.min(parseInt(batchSizeParam ?? "2000") || 2000, 2000);
+  const startOffset = Math.max(0, parseInt(startOffsetParam ?? "0") || 0);
 
   const encoder = new TextEncoder();
 
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
         const j = await r.json();
         total = j.count ?? 0;
       } catch {}
-      send({ type: "progress", done: 0, total });
+      send({ type: "progress", done: startOffset, total, nextOffset: startOffset });
 
       async function fetchBatch(offset: number): Promise<any[]> {
         const url = `${layerUrl}/query?where=1%3D1&outFields=${outFields}&resultOffset=${offset}&resultRecordCount=${fetchBatchSize}&f=geojson`;
@@ -106,10 +107,10 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        let done = 0;
+        let done = startOffset;
         // Pipeline: start fetching next batch while current is being inserted
-        let nextFetch = fetchBatch(0);
-        for (let offset = 0; ; offset += fetchBatchSize) {
+        let nextFetch = fetchBatch(startOffset);
+        for (let offset = startOffset; ; offset += fetchBatchSize) {
           const features = await nextFetch;
           if (features.length === 0) break;
           const isLast = features.length < fetchBatchSize;
@@ -117,7 +118,8 @@ export async function POST(req: NextRequest) {
 
           const inserted = await insertFeatures(features);
           done += inserted;
-          send({ type: "progress", done, total: Math.max(total, done) });
+          const nextOffset = offset + fetchBatchSize;
+          send({ type: "progress", done, total: Math.max(total, done), nextOffset });
           if (isLast) break;
         }
         send({ type: "done", done });

@@ -80,7 +80,7 @@ interface ArcGISMeta {
   count: number;
 }
 
-type ArcPhase = "idle" | "loading-meta" | "pick-layer" | "ready" | "importing" | "cancelling" | "cancelled" | "done" | "error";
+type ArcPhase = "idle" | "loading-meta" | "pick-layer" | "ready" | "importing" | "cancelling" | "cancelled" | "interrupted" | "done" | "error";
 
 // ─── File import helpers ──────────────────────────────────────────────────────
 
@@ -333,6 +333,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   const [arcSelectedLayerId, setArcSelectedLayerId] = React.useState<string>("");
   const abortRef = React.useRef(false);
   const arcStartTimeRef = React.useRef(0);
+  const arcNextOffsetRef = React.useRef(0);
 
   // ── File import state ─────────────────────────────────────────────────────
   const [filePhase, setFilePhase] = React.useState<FilePhase>("idle");
@@ -350,6 +351,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     setArcSchema(defaultSchema ?? "public"); setArcTable("");
     setArcProgress({ done: 0, total: 0 }); setArcError("");
     setArcServiceLayers(null); setArcSelectedLayerId("");
+    arcNextOffsetRef.current = 0;
     abortRef.current = false;
     setFilePhase("idle"); setFileLayers([]); setFileSelectedIdx(0); setFileColMappings([]);
     setFileSchema(defaultSchema ?? "public"); setFileTable("");
@@ -420,29 +422,31 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     await loadArcMeta(newUrl);
   }
 
-  async function startArcImport() {
+  async function startArcImport(startOffset = 0) {
     if (!arcMeta) return;
     abortRef.current = false;
     arcStartTimeRef.current = Date.now();
+    arcNextOffsetRef.current = startOffset;
     setArcPhase("importing");
-    setArcProgress({ done: 0, total: arcMeta.count });
+    if (startOffset === 0) setArcProgress({ done: 0, total: arcMeta.count });
 
     const includedCols = arcColMappings.filter((c) => c.include);
     const outFields = includedCols.map((c) => c.origName).join(",") || "*";
 
-    // Create table first
-    const createRes = await fetch("/api/pg/create-table", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dsn, schema: arcSchema, table: arcTable, geomType: mapGeomType(arcMeta.geometryType), srid: 4326, columns: includedCols.map((c) => ({ name: c.pgName, type: c.type })), timestamps: false }),
-    });
-    const createData = await createRes.json();
-    if (!createRes.ok) { setArcError(createData.error ?? "Failed to create table"); setArcPhase("error"); return; }
+    // Only create the table on a fresh import, not a resume
+    if (startOffset === 0) {
+      const createRes = await fetch("/api/pg/create-table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dsn, schema: arcSchema, table: arcTable, geomType: mapGeomType(arcMeta.geometryType), srid: 4326, columns: includedCols.map((c) => ({ name: c.pgName, type: c.type })), timestamps: false }),
+      });
+      const createData = await createRes.json();
+      if (!createRes.ok) { setArcError(createData.error ?? "Failed to create table"); setArcPhase("error"); return; }
+    }
 
     // Server-side import: ArcGIS → server → Postgres, streamed NDJSON progress
     const layerUrl = normalizeLayerUrl(arcUrl);
     const importAbort = new AbortController();
-    // Store abort fn so cancel button can reach it
     (abortRef as any).cancel = () => importAbort.abort();
 
     let res: Response;
@@ -458,6 +462,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
           outFields,
           columns: includedCols.map((c) => ({ origName: c.origName, pgName: c.pgName })),
           batchSize: Math.min(arcMeta.maxRecordCount, 2000),
+          startOffset,
         }),
         signal: importAbort.signal,
       });
@@ -475,6 +480,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const reader = res.body!.getReader();
     const dec = new TextDecoder();
     let buf = "";
+    let completed = false;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -488,8 +494,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
           try { msg = JSON.parse(line); } catch { continue; }
           if (msg.type === "progress") {
             setArcProgress({ done: msg.done, total: msg.total });
+            if (msg.nextOffset != null) arcNextOffsetRef.current = msg.nextOffset;
           } else if (msg.type === "done") {
             setArcProgress((p) => ({ ...p, done: msg.done }));
+            completed = true;
             setArcPhase("done");
             onCreated();
             return;
@@ -502,8 +510,9 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
       }
     } catch (e: any) {
       if (e.name === "AbortError") { setArcPhase("cancelled"); return; }
-      setArcError(e.message ?? "Stream error"); setArcPhase("error");
     }
+    // Stream closed without a "done" message — server timed out or connection dropped
+    if (!completed) setArcPhase("interrupted");
   }
 
   async function dropArcTable() {
@@ -701,6 +710,16 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                   <p className="text-xs text-muted-foreground">{arcProgress.done.toLocaleString()} of {arcProgress.total.toLocaleString()} features imported into <span className="font-mono">{arcSchema}.{arcTable}</span>.</p>
                 </div>
               )}
+
+              {arcPhase === "interrupted" && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 space-y-2">
+                  <p className="text-sm font-medium">Connection interrupted</p>
+                  <p className="text-xs text-muted-foreground">
+                    {arcProgress.done.toLocaleString()} of {arcProgress.total.toLocaleString()} features were imported before the connection was lost (likely a server timeout).
+                    You can resume from where it left off.
+                  </p>
+                </div>
+              )}
               {arcPhase === "done" && <p className="text-sm text-green-600 dark:text-green-400">Import complete — {arcProgress.done.toLocaleString()} features added to <span className="font-mono">{arcSchema}.{arcTable}</span>.</p>}
               {arcPhase === "error" && arcError && <p className="text-sm text-destructive break-words">{arcError}</p>}
 
@@ -711,6 +730,11 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                 {arcPhase === "cancelled" && (
                   <><Button variant="destructive" onClick={dropArcTable}>Drop table</Button>
                   <Button onClick={() => { onCreated(); onOpenChange(false); }}>Keep partial data</Button></>
+                )}
+                {arcPhase === "interrupted" && (
+                  <><Button variant="destructive" onClick={dropArcTable}>Drop table</Button>
+                  <Button variant="outline" onClick={() => { onCreated(); onOpenChange(false); }}>Keep partial data</Button>
+                  <Button onClick={() => startArcImport(arcNextOffsetRef.current)}>Resume</Button></>
                 )}
                 {(arcPhase === "idle" || arcPhase === "loading-meta" || arcPhase === "ready" || arcPhase === "done" || arcPhase === "error") && (
                   <Button variant="outline" onClick={() => onOpenChange(false)}>{arcPhase === "done" ? "Close" : "Cancel"}</Button>
