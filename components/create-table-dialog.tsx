@@ -61,6 +61,8 @@ async function arcFetch(url: string): Promise<any> {
 function mapGeomType(esriType: string): string {
   if (esriType === "esriGeometryPoint") return "Point";
   if (esriType === "esriGeometryMultipoint") return "MultiPoint";
+  if (esriType === "esriGeometryPolyline") return "MultiLineString";
+  if (esriType === "esriGeometryPolygon") return "MultiPolygon";
   return "Geometry";
 }
 
@@ -456,7 +458,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
       layerUrl,
       outFields,
       columns: includedCols.map((c) => ({ origName: c.origName, pgName: c.pgName })),
-      batchSize: Math.min(arcMeta.maxRecordCount, 2000),
+      batchSize: Math.min(arcMeta.maxRecordCount, arcMeta.geometryType === "esriGeometryPoint" || arcMeta.geometryType === "esriGeometryMultipoint" ? 2000 : 500),
     };
 
     // Loop over server chunks — each call processes maxBatches fetch-insert cycles,

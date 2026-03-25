@@ -64,13 +64,27 @@ export async function POST(req: NextRequest) {
       } catch {}
       send({ type: "progress", done: startOffset, total, nextOffset: startOffset });
 
+      // Effective batch size — reduced permanently if ArcGIS times out
+      let effectiveBatchSize = fetchBatchSize;
+
       async function fetchBatch(offset: number): Promise<any[]> {
-        const url = `${layerUrl}/query?where=1%3D1&outFields=${outFields}&resultOffset=${offset}&resultRecordCount=${fetchBatchSize}&f=geojson`;
-        const res = await fetch(url, { headers: { Accept: "application/geo+json,application/json" } });
-        if (!res.ok) throw new Error(`ArcGIS returned HTTP ${res.status}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error.message ?? "ArcGIS query error");
-        return data.features ?? [];
+        let size = effectiveBatchSize;
+        while (true) {
+          const url = `${layerUrl}/query?where=1%3D1&outFields=${outFields}&resultOffset=${offset}&resultRecordCount=${size}&geometryPrecision=6&f=geojson`;
+          const res = await fetch(url, { headers: { Accept: "application/geo+json,application/json" } });
+          if (res.status === 504 || res.status === 503 || res.status === 502) {
+            const smaller = Math.floor(size / 2);
+            if (smaller < 50) throw new Error(`ArcGIS returned HTTP ${res.status} even at ${size} records per request. The service may be unavailable.`);
+            // Reduce for this request and all future ones
+            size = smaller;
+            effectiveBatchSize = smaller;
+            continue;
+          }
+          if (!res.ok) throw new Error(`ArcGIS returned HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message ?? "ArcGIS query error");
+          return data.features ?? [];
+        }
       }
 
       async function insertFeatures(features: any[]): Promise<number> {
@@ -113,24 +127,39 @@ export async function POST(req: NextRequest) {
       try {
         let done = startOffset;
         let batchCount = 0;
-        // Pipeline: start fetching next batch while current is being inserted
-        let nextFetch = fetchBatch(startOffset);
-        for (let offset = startOffset; ; offset += fetchBatchSize) {
-          const features = await nextFetch;
+
+        // Sliding window of concurrent ArcGIS fetches.
+        // While inserting batch N, batches N+1…N+PREFETCH are already downloading.
+        const PREFETCH = 3;
+        const inflight: Promise<any[]>[] = [];
+        let nextFetchOffset = startOffset;
+
+        function launchNext() {
+          if (total > 0 && nextFetchOffset >= total) return;
+          inflight.push(fetchBatch(nextFetchOffset));
+          nextFetchOffset += effectiveBatchSize;
+        }
+
+        for (let i = 0; i < PREFETCH; i++) launchNext();
+
+        let offset = startOffset;
+        while (inflight.length > 0) {
+          const features = await inflight.shift()!;
           if (features.length === 0) break;
-          const isLast = features.length < fetchBatchSize;
-          if (!isLast) nextFetch = fetchBatch(offset + fetchBatchSize);
+          const isLast = features.length < effectiveBatchSize;
+
+          // Slide the window forward — launch next fetch while we insert
+          if (!isLast) launchNext();
 
           const inserted = await insertFeatures(features);
           done += inserted;
           batchCount++;
-          const nextOffset = offset + fetchBatchSize;
+          offset += effectiveBatchSize;
+          const nextOffset = offset;
           send({ type: "progress", done, total: Math.max(total, done), nextOffset });
 
           if (isLast) break;
 
-          // Reached the per-call batch limit — send a checkpoint so the client
-          // can start a new request and we exit before hitting a server timeout.
           if (batchCount >= maxBatches) {
             send({ type: "checkpoint", done, total: Math.max(total, done), nextOffset });
             break;
