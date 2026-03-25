@@ -740,7 +740,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                   <Button variant="outline" onClick={() => onOpenChange(false)}>{arcPhase === "done" ? "Close" : "Cancel"}</Button>
                 )}
                 {arcPhase === "ready" && (
-                  <Button onClick={startArcImport}
+                  <Button onClick={() => startArcImport()}
                     disabled={!arcTable.trim() || !arcSchema.trim() || arcColMappings.some((c) => c.include && !VALID_IDENT_RE.test(c.pgName)) || arcColMappings.every((c) => !c.include)}>
                     Import
                   </Button>
