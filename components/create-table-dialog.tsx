@@ -80,7 +80,7 @@ interface ArcGISMeta {
   count: number;
 }
 
-type ArcPhase = "idle" | "loading-meta" | "ready" | "importing" | "cancelling" | "cancelled" | "done" | "error";
+type ArcPhase = "idle" | "loading-meta" | "pick-layer" | "ready" | "importing" | "cancelling" | "cancelled" | "done" | "error";
 
 // ─── File import helpers ──────────────────────────────────────────────────────
 
@@ -329,6 +329,8 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   const [arcTable, setArcTable] = React.useState("");
   const [arcProgress, setArcProgress] = React.useState({ done: 0, total: 0 });
   const [arcError, setArcError] = React.useState("");
+  const [arcServiceLayers, setArcServiceLayers] = React.useState<{ id: number; name: string }[] | null>(null);
+  const [arcSelectedLayerId, setArcSelectedLayerId] = React.useState<string>("");
   const abortRef = React.useRef(false);
   const arcStartTimeRef = React.useRef(0);
 
@@ -347,6 +349,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     setArcUrl(""); setArcPhase("idle"); setArcMeta(null); setArcColMappings([]);
     setArcSchema(defaultSchema ?? "public"); setArcTable("");
     setArcProgress({ done: 0, total: 0 }); setArcError("");
+    setArcServiceLayers(null); setArcSelectedLayerId("");
     abortRef.current = false;
     setFilePhase("idle"); setFileLayers([]); setFileSelectedIdx(0); setFileColMappings([]);
     setFileSchema(defaultSchema ?? "public"); setFileTable("");
@@ -357,17 +360,43 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
 
   // ── ArcGIS functions ──────────────────────────────────────────────────────
 
-  async function loadArcMeta() {
-    const layerUrl = normalizeLayerUrl(arcUrl);
+  async function loadArcMeta(urlOverride?: string) {
+    const rawUrl = urlOverride ?? arcUrl;
+    const layerUrl = normalizeLayerUrl(rawUrl);
     if (!layerUrl) return;
     setArcPhase("loading-meta");
     setArcError("");
+    setArcServiceLayers(null);
     try {
-      const metaJson = await arcFetch(`${layerUrl}?f=json`);
+      let metaJson = await arcFetch(`${layerUrl}?f=json`);
       if (metaJson.error) throw new Error(metaJson.error.message ?? "ArcGIS metadata error");
+
+      // Detect FeatureServer root: has `layers` list but no per-layer `fields`
+      let resolvedUrl = layerUrl;
+      if (!metaJson.fields && Array.isArray(metaJson.layers)) {
+        const featureLayers = (metaJson.layers as any[]).filter(
+          (l: any) => l.type === "Feature Layer" || l.geometryType
+        );
+        if (featureLayers.length === 0)
+          throw new Error("No feature layers found in this service.");
+        if (featureLayers.length === 1) {
+          // Auto-select the only layer
+          resolvedUrl = `${layerUrl}/${featureLayers[0].id}`;
+          setArcUrl(resolvedUrl);
+          metaJson = await arcFetch(`${resolvedUrl}?f=json`);
+          if (metaJson.error) throw new Error(metaJson.error.message ?? "ArcGIS metadata error");
+        } else {
+          // Multiple layers — let user pick
+          setArcServiceLayers(featureLayers.map((l: any) => ({ id: l.id, name: l.name })));
+          setArcSelectedLayerId(String(featureLayers[0].id));
+          setArcPhase("pick-layer");
+          return;
+        }
+      }
+
       let count = 0;
       try {
-        const countJson = await arcFetch(`${layerUrl}/query?where=1%3D1&returnCountOnly=true&f=json`);
+        const countJson = await arcFetch(`${resolvedUrl}/query?where=1%3D1&returnCountOnly=true&f=json`);
         count = countJson.count ?? 0;
       } catch { count = 0; }
       const fields: ArcGISField[] = (metaJson.fields ?? []).filter((f: ArcGISField) => !SKIP_FIELD_TYPES.has(f.type));
@@ -383,6 +412,12 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
       setArcError(e.message ?? "Failed to load metadata");
       setArcPhase("error");
     }
+  }
+
+  async function confirmLayerPick() {
+    const newUrl = `${normalizeLayerUrl(arcUrl)}/${arcSelectedLayerId}`;
+    setArcUrl(newUrl);
+    await loadArcMeta(newUrl);
   }
 
   async function startArcImport() {
@@ -591,14 +626,34 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                     disabled={arcPhase === "importing" || arcPhase === "done"}
                     onKeyDown={(e) => { if (e.key === "Enter" && arcPhase === "idle") loadArcMeta(); }}
                   />
-                  <Button variant="outline" onClick={loadArcMeta}
-                    disabled={!arcUrl.trim() || arcPhase === "loading-meta" || arcPhase === "importing" || arcPhase === "done"}>
+                  <Button variant="outline" onClick={() => loadArcMeta()}
+                    disabled={!arcUrl.trim() || arcPhase === "loading-meta" || arcPhase === "pick-layer" || arcPhase === "importing" || arcPhase === "done"}>
                     {arcPhase === "loading-meta" ? "Loading…" : "Load"}
                   </Button>
                 </div>
               </div>
 
-              {arcMeta && arcPhase !== "idle" && arcPhase !== "loading-meta" && (
+              {arcPhase === "pick-layer" && arcServiceLayers && (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">This service has multiple layers — select one to import</Label>
+                    <Select value={arcSelectedLayerId} onValueChange={setArcSelectedLayerId}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {arcServiceLayers.map((l) => (
+                          <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                    <Button onClick={confirmLayerPick} disabled={!arcSelectedLayerId}>Load Layer</Button>
+                  </div>
+                </div>
+              )}
+
+              {arcMeta && arcPhase !== "idle" && arcPhase !== "loading-meta" && arcPhase !== "pick-layer" && (
                 <div className="rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium truncate max-w-52">{arcMeta.name}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Geometry</span><span>{arcMeta.geometryType.replace("esriGeometry", "")}</span></div>
