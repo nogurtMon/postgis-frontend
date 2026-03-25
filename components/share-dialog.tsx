@@ -4,14 +4,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Copy, Check } from "lucide-react";
-import type { MapLayer, BasemapDef } from "@/lib/types";
+import type { MapLayer } from "@/lib/types";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   layers: MapLayer[];
   basemap: string;
-  customBasemaps: BasemapDef[];
 }
 
 export interface ShareState {
@@ -24,7 +23,6 @@ export interface ShareState {
     geomTypeOverride?: string | null;
   }>;
   basemap: string;
-  customBasemaps: BasemapDef[];
 }
 
 export function encodeShareState(state: ShareState): string {
@@ -39,7 +37,7 @@ export function decodeShareState(encoded: string): ShareState | null {
   }
 }
 
-export function ShareDialog({ open, onOpenChange, layers, basemap, customBasemaps }: Props) {
+export function ShareDialog({ open, onOpenChange, layers, basemap }: Props) {
   const [copied, setCopied] = React.useState(false);
 
   const shareState: ShareState = {
@@ -52,7 +50,6 @@ export function ShareDialog({ open, onOpenChange, layers, basemap, customBasemap
       geomTypeOverride: l.geomTypeOverride,
     })),
     basemap,
-    customBasemaps,
   };
 
   const encoded = encodeShareState(shareState);

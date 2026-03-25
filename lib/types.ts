@@ -71,11 +71,6 @@ export interface MapLayer {
   geomTypeOverride?: string | null; // user-set override when table's geom_type is generic
 }
 
-export interface BasemapDef {
-  key: string;
-  label: string;
-  url: string; // XYZ tile URL template, e.g. https://.../{z}/{x}/{y}.png
-}
 
 export const BASEMAP_OPTIONS: { key: string; label: string }[] = [
   { key: "liberty",   label: "Liberty"   },

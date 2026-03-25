@@ -68,13 +68,6 @@ const BLANK_STYLE = {
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
 };
 
-function buildXYZStyle(url: string) {
-  return {
-    version: 8 as const,
-    sources: { "xyz": { type: "raster" as const, tiles: [url], tileSize: 256 } },
-    layers: [{ id: "xyz", type: "raster" as const, source: "xyz" }],
-  };
-}
 
 // ─── types ────────────────────────────────────────────────────────────────────
 interface Selection { feature: any; layer: MapLayer; }
@@ -88,7 +81,6 @@ interface Props {
   onLayerDataChanged?: (layerId: string) => void;
   flyTo?: ZoomTarget | null;
   basemap?: string;
-  customBasemaps?: import("@/lib/types").BasemapDef[];
 }
 
 // ─── component ────────────────────────────────────────────────────────────────
@@ -96,7 +88,6 @@ export default function MaplibreMap({
   layers,
   flyTo,
   basemap: basemapProp,
-  customBasemaps = [],
 }: Props) {
   const mapRef = React.useRef<any>(null);
   const basemap = basemapProp ?? "";
@@ -113,8 +104,6 @@ export default function MaplibreMap({
   function resolveBasemapStyle() {
     if (!basemap) return BLANK_STYLE as any;
     if (basemap in BASEMAPS) return BASEMAPS[basemap as BasemapKey].style as any;
-    const custom = customBasemaps.find((b) => b.key === basemap);
-    if (custom) return custom.url.includes("{z}") ? buildXYZStyle(custom.url) : custom.url;
     return BLANK_STYLE as any;
   }
 

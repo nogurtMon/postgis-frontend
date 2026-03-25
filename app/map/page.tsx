@@ -6,7 +6,7 @@ import { SettingsDialog } from "@/components/settings-dialog";
 import { TableSidebar } from "@/components/table-sidebar";
 import { useDsn } from "@/hooks/use-dsn";
 import { LAYER_COLORS, DEFAULT_STYLE } from "@/lib/types";
-import type { TableRow, MapLayer, BasemapDef } from "@/lib/types";
+import type { TableRow, MapLayer } from "@/lib/types";
 import type { ZoomTarget } from "@/components/maplibre-map";
 
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,6 @@ function dbLabel(dsn: string) {
 
 const LAYERS_KEY = "postgis-layers";
 const DSN_LS_KEY = "pg_dsn"; // must match the key used in use-dsn.ts
-const CUSTOM_BASEMAPS_KEY = "postgis-custom-basemaps";
-
 function loadLayers(dsn: string): MapLayer[] {
   try {
     const all = JSON.parse(localStorage.getItem(LAYERS_KEY) ?? "{}");
@@ -38,11 +36,6 @@ function saveLayers(dsn: string, layers: MapLayer[]) {
     all[dsn] = layers;
     localStorage.setItem(LAYERS_KEY, JSON.stringify(all));
   } catch {}
-}
-
-function loadCustomBasemaps(): BasemapDef[] {
-  try { return JSON.parse(localStorage.getItem(CUSTOM_BASEMAPS_KEY) ?? "[]"); }
-  catch { return []; }
 }
 
 export default function Home() {
@@ -79,8 +72,6 @@ export default function Home() {
   const [activeLayerId, setActiveLayerId] = React.useState<string | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
   const [basemap, setBasemap] = React.useState("liberty");
-  const [customBasemaps, setCustomBasemaps] = React.useState<BasemapDef[]>(() => loadCustomBasemaps());
-
   async function zoomToLayer(layer: MapLayer) {
     try {
       const res = await fetch("/api/pg/extent", {
@@ -172,23 +163,6 @@ export default function Home() {
     setLayers((prev) => newOrder.map((id) => prev.find((l) => l.id === id)!).filter(Boolean));
   }
 
-  function addCustomBasemap(b: BasemapDef) {
-    setCustomBasemaps((prev) => {
-      const next = [...prev, b];
-      localStorage.setItem(CUSTOM_BASEMAPS_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
-
-  function removeCustomBasemap(key: string) {
-    setCustomBasemaps((prev) => {
-      const next = prev.filter((b) => b.key !== key);
-      localStorage.setItem(CUSTOM_BASEMAPS_KEY, JSON.stringify(next));
-      if (basemap === key) setBasemap("");
-      return next;
-    });
-  }
-
   return (
     <div className="h-screen overflow-hidden grid grid-rows-[auto_1fr]">
       <header className="bg-background border-b px-3 py-1 flex items-center justify-between gap-4 text-[11px] font-mono shrink-0">
@@ -244,9 +218,6 @@ export default function Home() {
           onOpenSettings={() => setSettingsOpen(true)}
           basemap={basemap}
           onBasemapChange={setBasemap}
-          customBasemaps={customBasemaps}
-          onAddCustomBasemap={addCustomBasemap}
-          onRemoveCustomBasemap={removeCustomBasemap}
         />
         <div className="flex-1 relative">
           <MaplibreMap
@@ -256,7 +227,6 @@ export default function Home() {
             onLayerDataChanged={onLayerDataChanged}
             flyTo={zoomTarget}
             basemap={basemap}
-            customBasemaps={customBasemaps}
           />
         </div>
       </div>
@@ -273,7 +243,6 @@ export default function Home() {
         onOpenChange={setShareOpen}
         layers={layers}
         basemap={basemap}
-        customBasemaps={customBasemaps}
       />
     </div>
   );

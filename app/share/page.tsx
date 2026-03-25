@@ -82,7 +82,6 @@ export default function SharePage() {
         <MaplibreMap
           layers={layers}
           basemap={basemap}
-          customBasemaps={[]}
         />
         {!dsn && loaded && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm">

@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import type { TableRow, MapLayer, AttrFilter, AttrOperator, RadiusScale, ValueScale, BasemapDef, CategoricalFill, FillColorRule } from "@/lib/types";
+import type { TableRow, MapLayer, AttrFilter, AttrOperator, RadiusScale, ValueScale, CategoricalFill, FillColorRule } from "@/lib/types";
 import { BASEMAP_OPTIONS } from "@/lib/types";
 import { CreateTableDialog } from "@/components/create-table-dialog";
 import { DeleteTableDialog } from "@/components/delete-table-dialog";
@@ -35,9 +35,6 @@ interface Props {
   onOpenSettings?: () => void;
   basemap: string;
   onBasemapChange: (key: string) => void;
-  customBasemaps: BasemapDef[];
-  onAddCustomBasemap: (b: BasemapDef) => void;
-  onRemoveCustomBasemap: (key: string) => void;
 }
 
 // ─── connection error helper ─────────────────────────────────────────────────
@@ -405,17 +402,17 @@ function InValuePicker({
         value={value}
         placeholder={distinctValues === null ? "Loading…" : "comma-separated values"}
         onChange={(e) => onChange(e.target.value)}
-        className="h-6 text-[11px] flex-1 min-w-0"
+        className="h-6 text-[11px] flex-1 min-w-0 max-w-30"
       />
     );
   }
 
   return (
-    <div className="flex-1 min-w-0 border rounded max-h-28 overflow-y-auto bg-background">
+    <div className="w-full min-w-0 border rounded max-h-28 overflow-x-hidden overflow-y-auto bg-background">
       {distinctValues!.map((v) => (
-        <label key={v} className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-muted/40 cursor-pointer">
+        <label key={v} className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-muted/40 cursor-pointer min-w-0 max-w-50">
           <input type="checkbox" checked={selected.has(v)} onChange={() => toggle(v)} className="h-3 w-3 shrink-0" />
-          <span className="text-[11px] truncate font-mono">{v}</span>
+          <span className="text-[11px] truncate font-mono min-w-0 flex-1">{v}</span>
         </label>
       ))}
       {distinctValues!.length === 0 && (
@@ -481,7 +478,7 @@ function LayerFilterEditor({
   const IN_OPERATORS: AttrOperator[] = ["in", "not_in"];
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5 min-w-0">
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</p>
 
       {layer.filters.map((f, i) => {
@@ -495,9 +492,9 @@ function LayerFilterEditor({
                 <SelectTrigger className="h-6 text-[11px] flex-1 min-w-0 font-mono overflow-hidden [&>span]:truncate">
                   <SelectValue placeholder="column" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[var(--radix-select-trigger-width)]">
                   {nonGeomCols.map((c) => (
-                    <SelectItem key={c.name} value={c.name} className="text-xs font-mono">{c.name}</SelectItem>
+                    <SelectItem key={c.name} value={c.name} className="text-xs font-mono [&>span]:truncate">{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -511,7 +508,7 @@ function LayerFilterEditor({
                 <SelectTrigger className="h-6 text-[11px] w-full">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[var(--radix-select-trigger-width)]">
                   {ALL_OPERATORS.map((op) => (
                     <SelectItem key={op} value={op} className="text-xs">{OPERATOR_LABELS[op]}</SelectItem>
                   ))}
@@ -556,7 +553,6 @@ export function TableSidebar({
   onAddLayer, onRemoveLayer, onUpdateLayer, onReorderLayers,
   activeLayerId, onActiveLayerChange, onZoomToLayer, onZoomToTable, onOpenSettings,
   basemap, onBasemapChange,
-  customBasemaps, onAddCustomBasemap, onRemoveCustomBasemap,
 }: Props) {
   const [tab, setTab] = React.useState("browser");
   const [tables, setTables] = React.useState<TableRow[]>([]);
@@ -602,15 +598,11 @@ export function TableSidebar({
 
   const [connectionOpen, setConnectionOpen] = React.useState(false);
   const [basemapOpen, setBasemapOpen] = React.useState(false);
-  const [addingBasemap, setAddingBasemap] = React.useState(false);
-  const [newBasemapLabel, setNewBasemapLabel] = React.useState("");
-  const [newBasemapUrl, setNewBasemapUrl] = React.useState("");
   type CtxTarget =
     | { type: "connection" }
     | { type: "schema"; schema: string }
     | { type: "table"; table: TableRow }
-    | { type: "basemap"; key: string; isCustom: boolean }
-    | { type: "basemap-root" };
+    | { type: "basemap"; key: string };
   const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number; target: CtxTarget } | null>(null);
   const contextMenuRef = React.useRef<HTMLDivElement>(null);
 
@@ -1024,7 +1016,6 @@ export function TableSidebar({
             <button
               className="w-full flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/60 text-left select-none"
               onClick={() => setBasemapOpen((v) => !v)}
-              onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "basemap-root" } }); }}
             >
               {basemapOpen
                 ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
@@ -1036,59 +1027,17 @@ export function TableSidebar({
 
             {basemapOpen && (
               <>
-                {[...BASEMAP_OPTIONS, ...customBasemaps.map((b) => ({ key: b.key, label: b.label }))].map(({ key, label }) => {
-                  const isCustom = customBasemaps.some((b) => b.key === key);
-                  return (
-                    <button
-                      key={key}
-                      className={`w-full flex items-center gap-2 pl-8 pr-3 py-1 text-left hover:bg-muted/40 text-xs text-muted-foreground`}
-                      onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "basemap", key, isCustom } }); }}
-                      onDoubleClick={() => { onBasemapChange(key); setTab("layers"); }}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 border ${basemap === key ? "bg-primary border-primary" : "border-muted-foreground"}`} />
-                      <span className="flex-1">{label}</span>
-                      {isCustom && <span className="text-[10px] text-muted-foreground/60">custom</span>}
-                    </button>
-                  );
-                })}
-
-                {addingBasemap && (
-                  <div className="pl-8 pr-3 py-2 space-y-1.5 border-t">
-                    <Input
-                      placeholder="Label"
-                      value={newBasemapLabel}
-                      onChange={(e) => setNewBasemapLabel(e.target.value)}
-                      className="h-7 text-xs"
-                      autoFocus
-                    />
-                    <Input
-                      placeholder="URL (XYZ or MapLibre style JSON)"
-                      value={newBasemapUrl}
-                      onChange={(e) => setNewBasemapUrl(e.target.value)}
-                      className="h-7 text-xs font-mono"
-                    />
-                    <div className="flex gap-1.5">
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs flex-1"
-                        disabled={!newBasemapLabel.trim() || !newBasemapUrl.trim()}
-                        onClick={() => {
-                          const key = `custom-${Date.now()}`;
-                          onAddCustomBasemap({ key, label: newBasemapLabel.trim(), url: newBasemapUrl.trim() });
-                          setAddingBasemap(false);
-                          setNewBasemapLabel("");
-                          setNewBasemapUrl("");
-                        }}
-                      >
-                        Add
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs"
-                        onClick={() => { setAddingBasemap(false); setNewBasemapLabel(""); setNewBasemapUrl(""); }}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                {BASEMAP_OPTIONS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    className={`w-full flex items-center gap-2 pl-8 pr-3 py-1 text-left hover:bg-muted/40 text-xs text-muted-foreground`}
+                    onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, target: { type: "basemap", key } }); }}
+                    onDoubleClick={() => { onBasemapChange(key); setTab("layers"); }}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 border ${basemap === key ? "bg-primary border-primary" : "border-muted-foreground"}`} />
+                    <span className="flex-1">{label}</span>
+                  </button>
+                ))}
               </>
             )}
           </div>
@@ -1302,7 +1251,7 @@ export function TableSidebar({
 
           {/* Active basemap entry */}
           {basemap && (() => {
-            const bDef = [...BASEMAP_OPTIONS, ...customBasemaps.map((b) => ({ key: b.key, label: b.label }))].find((b) => b.key === basemap);
+            const bDef = BASEMAP_OPTIONS.find((b) => b.key === basemap);
             return (
               <div className="flex items-center gap-1 px-1.5 py-1.5 border-t">
                 <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/20" />
@@ -1448,30 +1397,16 @@ export function TableSidebar({
               </>
             );
           })()}
-          {contextMenu.target.type === "basemap-root" && (
-            <button className="w-full text-left px-3 py-1.5 hover:bg-muted"
-              onClick={() => { setBasemapOpen(true); setAddingBasemap(true); setContextMenu(null); }}>
-              Add basemap connection…
-            </button>
-          )}
           {contextMenu.target.type === "basemap" && (() => {
-            const { key, isCustom } = contextMenu.target as { type: "basemap"; key: string; isCustom: boolean };
+            const { key } = contextMenu.target as { type: "basemap"; key: string };
             const alreadyActive = basemap === key;
             return (
-              <>
-                <button
-                  className={`w-full text-left px-3 py-1.5 hover:bg-muted ${alreadyActive ? "text-muted-foreground" : ""}`}
-                  onClick={() => { if (!alreadyActive) { onBasemapChange(key); setTab("layers"); } setContextMenu(null); }}
-                >
-                  {alreadyActive ? "Already on map" : "Add to map"}
-                </button>
-                {isCustom && (
-                  <button className="w-full text-left px-3 py-1.5 hover:bg-muted text-destructive"
-                    onClick={() => { onRemoveCustomBasemap(key); setContextMenu(null); }}>
-                    Remove
-                  </button>
-                )}
-              </>
+              <button
+                className={`w-full text-left px-3 py-1.5 hover:bg-muted ${alreadyActive ? "text-muted-foreground" : ""}`}
+                onClick={() => { if (!alreadyActive) { onBasemapChange(key); setTab("layers"); } setContextMenu(null); }}
+              >
+                {alreadyActive ? "Already on map" : "Add to map"}
+              </button>
             );
           })()}
         </div>
