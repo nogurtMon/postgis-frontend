@@ -12,7 +12,7 @@ import type { ZoomTarget } from "@/components/maplibre-map";
 import { Button } from "@/components/ui/button";
 import { Settings, Share2 } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
-import { ShareDialog } from "@/components/share-dialog";
+import { SavedViewsDialog } from "@/components/saved-views-dialog";
 
 function dbLabel(dsn: string) {
   try {
@@ -238,7 +238,7 @@ export default function Home() {
         onSave={handleSaveDsn}
         onDisconnect={() => { clearAll(); }}
       />
-      <ShareDialog
+      <SavedViewsDialog
         open={shareOpen}
         onOpenChange={setShareOpen}
         layers={layers}

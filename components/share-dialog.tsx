@@ -73,8 +73,10 @@ export function ShareDialog({ open, onOpenChange, layers, basemap }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to create share");
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch {}
+      if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);
       const url = `${window.location.origin}/share/${data.id}`;
       setShareUrl(url);
       setEmbedCode(`<iframe src="${url}" width="100%" height="500" style="border:none;border-radius:8px;" allowfullscreen></iframe>`);
