@@ -3,6 +3,9 @@
 # Dev-mode DSN encryption key (auto-generated, never commit)
 .dsn-dev-key
 
+# Shared map configs (contain encrypted DSN tokens — never commit)
+/data/
+
 # dependencies
 /node_modules
 /.pnp

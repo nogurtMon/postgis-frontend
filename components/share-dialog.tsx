@@ -3,7 +3,7 @@ import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Loader2 } from "lucide-react";
 import type { MapLayer } from "@/lib/types";
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
   basemap: string;
 }
 
+// Legacy URL-hash encode/decode kept for backward compatibility with old /share links
 export interface ShareState {
   layers: Array<{
     id: string;
@@ -25,10 +26,6 @@ export interface ShareState {
   basemap: string;
 }
 
-export function encodeShareState(state: ShareState): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(state))));
-}
-
 export function decodeShareState(encoded: string): ShareState | null {
   try {
     return JSON.parse(decodeURIComponent(escape(atob(encoded))));
@@ -38,58 +35,136 @@ export function decodeShareState(encoded: string): ShareState | null {
 }
 
 export function ShareDialog({ open, onOpenChange, layers, basemap }: Props) {
-  const [copied, setCopied] = React.useState(false);
+  const [phase, setPhase] = React.useState<"idle" | "saving" | "done" | "error">("idle");
+  const [shareUrl, setShareUrl] = React.useState("");
+  const [embedCode, setEmbedCode] = React.useState("");
+  const [copiedLink, setCopiedLink] = React.useState(false);
+  const [copiedEmbed, setCopiedEmbed] = React.useState(false);
+  const [errorMsg, setErrorMsg] = React.useState("");
 
-  const shareState: ShareState = {
-    layers: layers.map(l => ({
-      id: l.id,
-      table: l.table,
-      visible: l.visible,
-      style: l.style,
-      filters: l.filters,
-      geomTypeOverride: l.geomTypeOverride,
-    })),
-    basemap,
-  };
+  // Reset when dialog opens
+  React.useEffect(() => {
+    if (open) {
+      setPhase("idle");
+      setShareUrl("");
+      setEmbedCode("");
+      setErrorMsg("");
+    }
+  }, [open]);
 
-  const encoded = encodeShareState(shareState);
-  const shareUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/share#${encoded}`
-    : "";
+  async function createShare() {
+    setPhase("saving");
+    setErrorMsg("");
+    try {
+      const payload = {
+        basemap,
+        layers: layers.map((l) => ({
+          id: l.id,
+          table: l.table,
+          dsn: l.dsn,
+          visible: l.visible,
+          style: l.style,
+          filters: l.filters,
+          geomTypeOverride: l.geomTypeOverride ?? null,
+        })),
+      };
+      const res = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to create share");
+      const url = `${window.location.origin}/share/${data.id}`;
+      setShareUrl(url);
+      setEmbedCode(`<iframe src="${url}" width="100%" height="500" style="border:none;border-radius:8px;" allowfullscreen></iframe>`);
+      setPhase("done");
+    } catch (e: any) {
+      setErrorMsg(e.message ?? "Unknown error");
+      setPhase("error");
+    }
+  }
 
-  async function copy() {
-    await navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function copy(text: string, which: "link" | "embed") {
+    await navigator.clipboard.writeText(text);
+    if (which === "link") {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } else {
+      setCopiedEmbed(true);
+      setTimeout(() => setCopiedEmbed(false), 2000);
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Share Map View</DialogTitle>
+          <DialogTitle>Share Map</DialogTitle>
           <DialogDescription>
-            This link encodes your current layers, styles, and filters. Anyone with database access can open it and see the same map configuration.
+            Generate a public read-only link. Anyone with the link can view this map — no account or database credentials needed.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 mt-2">
-          <div className="flex gap-2">
-            <Input value={shareUrl} readOnly className="font-mono text-xs flex-1" onClick={e => (e.target as HTMLInputElement).select()} />
-            <Button size="sm" variant="outline" className="shrink-0" onClick={copy}>
-              {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-            </Button>
-          </div>
+          {phase === "idle" && (
+            <>
+              <div className="bg-muted/40 rounded px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <p><span className="font-medium text-foreground">Includes:</span> {layers.length} {layers.length === 1 ? "layer" : "layers"}, styles, filters, basemap.</p>
+                <p><span className="font-medium text-foreground">Access:</span> Public read-only — no login required to view.</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                <Button onClick={createShare}>Generate link</Button>
+              </div>
+            </>
+          )}
 
-          <div className="bg-muted/40 rounded px-3 py-2 text-xs space-y-1 text-muted-foreground">
-            <p><span className="font-medium text-foreground">What's included:</span> layer selection, styles, filters, basemap.</p>
-            <p><span className="font-medium text-foreground">What's not included:</span> database credentials. The viewer will need to connect their own database to render the layers.</p>
-            <p className="pt-1">{layers.length} {layers.length === 1 ? "layer" : "layers"} encoded.</p>
-          </div>
+          {phase === "saving" && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Saving…
+            </div>
+          )}
 
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
-          </div>
+          {phase === "error" && (
+            <>
+              <p className="text-sm text-destructive">{errorMsg}</p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+                <Button onClick={createShare}>Retry</Button>
+              </div>
+            </>
+          )}
+
+          {phase === "done" && (
+            <>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">Share link</p>
+                <div className="flex gap-2">
+                  <Input value={shareUrl} readOnly className="font-mono text-xs flex-1" onClick={(e) => (e.target as HTMLInputElement).select()} />
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => copy(shareUrl, "link")}>
+                    {copiedLink ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">Embed code</p>
+                <div className="flex gap-2">
+                  <Input value={embedCode} readOnly className="font-mono text-xs flex-1" onClick={(e) => (e.target as HTMLInputElement).select()} />
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => copy(embedCode, "embed")}>
+                    {copiedEmbed ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Paste into any webpage to embed the map as an iframe.</p>
+              </div>
+
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => onOpenChange(false)}>Done</Button>
+              </div>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>
