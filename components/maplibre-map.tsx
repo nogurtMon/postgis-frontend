@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GeocoderControl } from "@/components/geocoder-control";
+import { MapLegend } from "@/components/map-legend";
 import type { MapLayer } from "@/lib/types";
 
 // ─── colour helpers ───────────────────────────────────────────────────────────
@@ -259,6 +260,8 @@ export default function MaplibreMap({
         }}
       />
 
+      <MapLegend layers={layers} />
+
       {/* ── Feature properties dialog ── */}
       <Dialog open={isPropsOpen} onOpenChange={setIsPropsOpen}>
         <DialogContent className="max-w-lg">
@@ -275,8 +278,8 @@ export default function MaplibreMap({
               <div className="space-y-0">
                 {Object.entries(selection.feature.properties || {}).map(([key, value]) => (
                   <div key={key} className="flex items-start justify-between gap-4 py-2 border-b last:border-0">
-                    <span className="text-sm font-medium capitalize shrink-0">{key.replace(/_/g, " ")}</span>
-                    <span className="text-sm text-muted-foreground text-right break-all">{String(value)}</span>
+                    <span className="text-sm font-medium capitalize shrink-0 max-w-[45%] truncate" title={key}>{key.replace(/_/g, " ")}</span>
+                    <span className="text-sm text-muted-foreground text-right break-all max-w-[50%]" title={String(value)}>{String(value)}</span>
                   </div>
                 ))}
               </div>

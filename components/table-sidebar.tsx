@@ -412,7 +412,7 @@ function InValuePicker({
       {distinctValues!.map((v) => (
         <label key={v} className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-muted/40 cursor-pointer min-w-0 max-w-50">
           <input type="checkbox" checked={selected.has(v)} onChange={() => toggle(v)} className="h-3 w-3 shrink-0" />
-          <span className="text-[11px] truncate font-mono min-w-0 flex-1">{v}</span>
+          <span className="text-[11px] truncate font-mono min-w-0 flex-1" title={v}>{v}</span>
         </label>
       ))}
       {distinctValues!.length === 0 && (
@@ -821,7 +821,7 @@ export function TableSidebar({
                         : <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
                       }
                       <Folder className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                      <span className="text-xs font-medium truncate flex-1">{schema}</span>
+                      <span className="text-xs font-medium truncate flex-1" title={schema}>{schema}</span>
                       <span className="text-[10px] text-muted-foreground shrink-0">{schemaTables.length}</span>
                     </button>
 
@@ -1135,9 +1135,9 @@ export function TableSidebar({
                     className="flex-1 flex items-center gap-1 min-w-0 overflow-hidden"
                   >
                     <span className="flex flex-col min-w-0">
-                      <span className="text-xs truncate font-medium leading-tight max-w-50">{layer.table.table_name}</span>
+                      <span className="text-xs truncate font-medium leading-tight max-w-50" title={layer.table.table_name}>{layer.table.table_name}</span>
                       {layer.table.table_schema !== "public" && (
-                        <span className="text-[10px] text-muted-foreground truncate leading-tight">{layer.table.table_schema}</span>
+                        <span className="text-[10px] text-muted-foreground truncate leading-tight" title={layer.table.table_schema}>{layer.table.table_schema}</span>
                       )}
                     </span>
                     {layer.filters.length > 0 && (

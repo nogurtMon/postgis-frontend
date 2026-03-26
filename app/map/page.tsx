@@ -193,11 +193,9 @@ export default function Home() {
             </span>
           )}
           <ModeToggle />
-          {layers.length > 0 && (
-            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setShareOpen(true)} title="Share map view">
-              <Share2 className="h-3.5 w-3.5" />
-            </Button>
-          )}
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setShareOpen(true)} title="Saved views">
+            <Share2 className="h-3.5 w-3.5" />
+          </Button>
           <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSettingsOpen(true)} title="Connection settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>

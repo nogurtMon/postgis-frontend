@@ -242,11 +242,32 @@ async function parseGpkg(file: File): Promise<ParsedLayer[]> {
 
 
 async function parseGeoJSON(file: File): Promise<ParsedLayer[]> {
-  const data = JSON.parse(await file.text());
-  const features = data.type === "FeatureCollection" ? (data.features ?? [])
-    : data.type === "Feature" ? [data]
-    : (() => { throw new Error("Expected a GeoJSON FeatureCollection or Feature"); })();
-  return [{ name: file.name.replace(/\.[^.]+$/, ""), features, geometryType: detectGeomType(features), srid: 4326 }];
+  const text = await file.text();
+  const name = file.name.replace(/\.[^.]+$/, "");
+  let features: any[];
+
+  // Try standard GeoJSON first
+  try {
+    const data = JSON.parse(text);
+    features = data.type === "FeatureCollection" ? (data.features ?? [])
+      : data.type === "Feature" ? [data]
+      : (() => { throw new Error("Expected a GeoJSON FeatureCollection or Feature"); })();
+  } catch (e: any) {
+    // Fall back to GeoJSON Lines (newline-delimited JSON, one feature per line)
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    const parsed = lines.map((l, i) => {
+      try { return JSON.parse(l); }
+      catch { throw new Error(`Invalid JSON on line ${i + 1}: ${l.slice(0, 60)}`); }
+    });
+    features = parsed.flatMap((obj) =>
+      obj.type === "FeatureCollection" ? (obj.features ?? [])
+      : obj.type === "Feature" ? [obj]
+      : []
+    );
+    if (features.length === 0) throw new Error(e.message ?? "Could not parse GeoJSON file");
+  }
+
+  return [{ name, features, geometryType: detectGeomType(features), srid: 4326 }];
 }
 
 async function parseKML(file: File): Promise<ParsedLayer[]> {
@@ -709,7 +730,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
 
               {arcMeta && arcPhase !== "idle" && arcPhase !== "loading-meta" && arcPhase !== "pick-layer" && (
                 <div className="rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium truncate max-w-52">{arcMeta.name}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium truncate max-w-52" title={arcMeta.name}>{arcMeta.name}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Geometry</span><span>{arcMeta.geometryType.replace("esriGeometry", "")}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Features</span><span>{arcProgress.total > 0 ? arcProgress.total.toLocaleString() : arcMeta.count > 0 ? arcMeta.count.toLocaleString() : "unknown"}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Fields</span><span>{arcMeta.fields.length}</span></div>
@@ -805,10 +826,10 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                     className="flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground cursor-pointer hover:bg-muted/40 transition-colors">
                     {filePhase === "parsing" ? "Reading file…" : (
                       <><span>Click to select or drag & drop</span>
-                      <span className="text-xs font-mono">.gpkg .kml .shp .zip</span></>
+                      <span className="text-xs font-mono">.gpkg .geojson .kml .shp .zip</span></>
                     )}
                     <input id="file-input" type="file"
-                      accept=".gpkg,.kml,.shp,.zip"
+                      accept=".gpkg,.geojson,.kml,.shp,.zip"
                       className="sr-only"
                       disabled={filePhase === "parsing"}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
@@ -837,7 +858,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
               {/* Metadata summary */}
               {filePhase === "ready" && fileLayers[fileSelectedIdx] && (
                 <div className="rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium">{fileLayers[fileSelectedIdx].name}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium truncate max-w-52" title={fileLayers[fileSelectedIdx].name}>{fileLayers[fileSelectedIdx].name}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Geometry</span><span>{fileLayers[fileSelectedIdx].geometryType}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">SRID</span><span>{fileLayers[fileSelectedIdx].srid}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Features</span><span>{fileLayers[fileSelectedIdx].features.length.toLocaleString()}</span></div>
