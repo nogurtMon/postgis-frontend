@@ -578,11 +578,17 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const createData = await createRes.json();
     if (!createRes.ok) { setFileError(createData.error ?? "Failed to create table"); setFilePhase("error"); return; }
 
-    const batchSize = 500;
-    for (let i = 0; i < layer.features.length; i += batchSize) {
-      const batch = layer.features.slice(i, i + batchSize);
-      const rows = batch.flatMap((f: any) => {
-        if (!f.geometry) return [];
+    // Build rows adaptively so each HTTP batch stays under ~800 KB
+    const MAX_PAYLOAD_BYTES = 800_000;
+    let i = 0;
+    while (i < layer.features.length) {
+      const rows: { geomJson: string; attrs: Record<string, any> }[] = [];
+      let payloadBytes = 100;
+      let j = i;
+      while (j < layer.features.length && rows.length < 500) {
+        const f = layer.features[j];
+        j++;
+        if (!f.geometry) continue;
         const attrs: Record<string, any> = {};
         for (const col of includedCols) {
           const val = f.properties?.[col.origName];
@@ -594,13 +600,32 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
             attrs[col.pgName] = String(val);
           }
         }
-        return [{ geomJson: JSON.stringify(f.geometry), attrs }];
-      });
+        const geomJson = JSON.stringify(f.geometry);
+        const rowBytes = geomJson.length + JSON.stringify(attrs).length + 20;
+        if (rows.length > 0 && payloadBytes + rowBytes > MAX_PAYLOAD_BYTES) {
+          j--; // put this feature back for the next batch
+          break;
+        }
+        rows.push({ geomJson, attrs });
+        payloadBytes += rowBytes;
+      }
+
       if (rows.length > 0) {
-        const insertRes = await fetch("/api/pg/bulk-insert", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dsn, schema: fileSchema, table: fileTable, rows, srid: layer.srid }),
-        });
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60_000);
+        let insertRes: Response;
+        try {
+          insertRes = await fetch("/api/pg/bulk-insert", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dsn, schema: fileSchema, table: fileTable, rows, srid: layer.srid }),
+            signal: ctrl.signal,
+          });
+        } catch (err: any) {
+          clearTimeout(timer);
+          setFileError(err.name === "AbortError" ? "Batch timed out after 60 s" : err.message ?? "Network error");
+          setFilePhase("error"); return;
+        }
+        clearTimeout(timer);
         if (!insertRes.ok) {
           const text = await insertRes.text();
           let msg = "Insert failed";
@@ -608,7 +633,9 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
           setFileError(msg); setFilePhase("error"); return;
         }
       }
-      setFileProgress({ done: i + batch.length, total: layer.features.length });
+
+      i = j;
+      setFileProgress({ done: i, total: layer.features.length });
       await new Promise((r) => setTimeout(r, 0));
     }
     setFilePhase("done");
