@@ -240,37 +240,13 @@ async function parseGpkg(file: File): Promise<ParsedLayer[]> {
   }
 }
 
+
 async function parseGeoJSON(file: File): Promise<ParsedLayer[]> {
   const data = JSON.parse(await file.text());
   const features = data.type === "FeatureCollection" ? (data.features ?? [])
     : data.type === "Feature" ? [data]
     : (() => { throw new Error("Expected a GeoJSON FeatureCollection or Feature"); })();
   return [{ name: file.name.replace(/\.[^.]+$/, ""), features, geometryType: detectGeomType(features), srid: 4326 }];
-}
-
-async function parseCSV(file: File): Promise<ParsedLayer[]> {
-  const text = await file.text();
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) throw new Error("CSV has no data rows");
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-
-  // Find lat/lon columns by common names
-  const latIdx = headers.findIndex((h) => /^(lat|latitude|y)$/i.test(h));
-  const lonIdx = headers.findIndex((h) => /^(lon|lng|longitude|x)$/i.test(h));
-  if (latIdx === -1 || lonIdx === -1)
-    throw new Error("Could not find lat/lon columns. Expected columns named lat/latitude/y and lon/lng/longitude/x.");
-
-  const features = lines.slice(1).flatMap((line): any[] => {
-    const cells = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
-    const lat = parseFloat(cells[latIdx]);
-    const lon = parseFloat(cells[lonIdx]);
-    if (isNaN(lat) || isNaN(lon)) return [];
-    const properties: Record<string, any> = {};
-    headers.forEach((h, i) => { if (i !== latIdx && i !== lonIdx) properties[h] = cells[i]; });
-    return [{ type: "Feature", geometry: { type: "Point", coordinates: [lon, lat] }, properties }];
-  });
-
-  return [{ name: file.name.replace(/\.[^.]+$/, ""), features, geometryType: "Point", srid: 4326 }];
 }
 
 async function parseKML(file: File): Promise<ParsedLayer[]> {
@@ -283,12 +259,24 @@ async function parseKML(file: File): Promise<ParsedLayer[]> {
 }
 
 async function parseShapefile(file: File): Promise<ParsedLayer[]> {
-  const shp = (await import("shpjs")).default;
+  const shpjs = await import("shpjs");
+  const shp = shpjs.default;
   const buf = await file.arrayBuffer();
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  const baseName = file.name.replace(/\.[^.]+$/, "");
+
+  if (ext === "shp") {
+    // Raw .shp — geometry only, no attributes
+    const geometries: any[] = (shpjs as any).parseShp(buf);
+    const features = geometries.map((g: any) => ({ type: "Feature", geometry: g, properties: {} }));
+    return [{ name: baseName, features, geometryType: detectGeomType(features), srid: 4326 }];
+  }
+
+  // .zip — full shapefile bundle
   const result = await shp(buf);
   const collections = Array.isArray(result) ? result : [result];
   return collections.map((fc: any) => ({
-    name: fc.fileName ?? file.name.replace(/\.[^.]+$/, ""),
+    name: fc.fileName ?? baseName,
     features: fc.features ?? [],
     geometryType: detectGeomType(fc.features ?? []),
     srid: 4326,
@@ -298,8 +286,7 @@ async function parseShapefile(file: File): Promise<ParsedLayer[]> {
 async function parseFile(file: File): Promise<ParsedLayer[]> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (ext === "gpkg") return parseGpkg(file);
-  if (ext === "geojson" || ext === "json") return parseGeoJSON(file);
-  if (ext === "csv") return parseCSV(file);
+  if (ext === "geojson") return parseGeoJSON(file);
   if (ext === "kml") return parseKML(file);
   if (ext === "shp" || ext === "zip") return parseShapefile(file);
   throw new Error(`Unsupported file type: .${ext}`);
@@ -339,6 +326,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
 
   // ── File import state ─────────────────────────────────────────────────────
   const [filePhase, setFilePhase] = React.useState<FilePhase>("idle");
+  const [fileIsRawShp, setFileIsRawShp] = React.useState(false);
   const [fileLayers, setFileLayers] = React.useState<ParsedLayer[]>([]);
   const [fileSelectedIdx, setFileSelectedIdx] = React.useState(0);
   const [fileColMappings, setFileColMappings] = React.useState<ColMapping[]>([]);
@@ -563,6 +551,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   async function handleFile(file: File) {
     setFilePhase("parsing");
     setFileError("");
+    setFileIsRawShp(file.name.toLowerCase().endsWith(".shp"));
     try {
       const layers = await parseFile(file);
       if (!layers.length) throw new Error("No layers found in file");
@@ -597,7 +586,13 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
         const attrs: Record<string, any> = {};
         for (const col of includedCols) {
           const val = f.properties?.[col.origName];
-          attrs[col.pgName] = val == null ? null : String(val);
+          if (val == null) { attrs[col.pgName] = null; continue; }
+          if (col.type === "numeric") {
+            const n = Number(val);
+            attrs[col.pgName] = isNaN(n) ? null : n;
+          } else {
+            attrs[col.pgName] = String(val);
+          }
         }
         return [{ geomJson: JSON.stringify(f.geometry), attrs }];
       });
@@ -606,8 +601,12 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dsn, schema: fileSchema, table: fileTable, rows, srid: layer.srid }),
         });
-        const insertData = await insertRes.json();
-        if (!insertRes.ok) { setFileError(insertData.error ?? "Insert failed"); setFilePhase("error"); return; }
+        if (!insertRes.ok) {
+          const text = await insertRes.text();
+          let msg = "Insert failed";
+          try { msg = JSON.parse(text).error ?? msg; } catch {}
+          setFileError(msg); setFilePhase("error"); return;
+        }
       }
       setFileProgress({ done: i + batch.length, total: layer.features.length });
       await new Promise((r) => setTimeout(r, 0));
@@ -774,15 +773,15 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
             <div className="space-y-4 mt-2">
               {(filePhase === "idle" || filePhase === "parsing") && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="file-input" className="text-xs">Supported formats: .gpkg, .geojson, .json, .kml, .csv, .shp, .zip</Label>
+                  <Label htmlFor="file-input" className="text-xs">Supported formats: .gpkg, .geojson, .kml, .shp, .zip</Label>
                   <label htmlFor="file-input"
                     className="flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground cursor-pointer hover:bg-muted/40 transition-colors">
                     {filePhase === "parsing" ? "Reading file…" : (
                       <><span>Click to select or drag & drop</span>
-                      <span className="text-xs font-mono">.gpkg .geojson .json .kml .csv .shp .zip</span></>
+                      <span className="text-xs font-mono">.gpkg .kml .shp .zip</span></>
                     )}
                     <input id="file-input" type="file"
-                      accept=".gpkg,.geojson,.json,.kml,.csv,.shp,.zip"
+                      accept=".gpkg,.kml,.shp,.zip"
                       className="sr-only"
                       disabled={filePhase === "parsing"}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
@@ -815,6 +814,12 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                   <div className="flex justify-between"><span className="text-muted-foreground">Geometry</span><span>{fileLayers[fileSelectedIdx].geometryType}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">SRID</span><span>{fileLayers[fileSelectedIdx].srid}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Features</span><span>{fileLayers[fileSelectedIdx].features.length.toLocaleString()}</span></div>
+                </div>
+              )}
+
+              {filePhase === "ready" && fileIsRawShp && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  No attributes — only geometry was found. To include attributes, restart and upload a <span className="font-mono">.zip</span> containing the <span className="font-mono">.shp</span>, <span className="font-mono">.dbf</span>, and <span className="font-mono">.prj</span> files together.
                 </div>
               )}
 

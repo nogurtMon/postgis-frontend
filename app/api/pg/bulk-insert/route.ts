@@ -30,39 +30,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid column: ${col}` }, { status: 400 });
   }
 
+  const hasGeom = rows[0]?.geomJson != null;
   const pool = getPool(dsn);
   const client = await pool.connect();
+  const colList = [
+    ...(hasGeom ? [ident("geom")] : []),
+    ...attrCols.map((c) => ident(c)),
+  ];
+
+  // Sub-batch to stay under pg's 65535 param limit
+  const paramsPerRow = (hasGeom ? 1 : 0) + attrCols.length;
+  const SUB_BATCH = paramsPerRow > 0 ? Math.min(500, Math.floor(65000 / paramsPerRow)) : 500;
 
   try {
     await client.query("BEGIN");
 
     let inserted = 0;
-    for (const row of rows) {
-      const attrs = row.attrs ?? {};
-      const attrEntries = Object.entries(attrs);
-      const colList: string[] = [];
-      const valList: string[] = [];
-      const paramValues: any[] = [];
+    for (let i = 0; i < rows.length; i += SUB_BATCH) {
+      const slice = rows.slice(i, i + SUB_BATCH);
+      const params: any[] = [];
+      const valueClauses: string[] = [];
 
-      if (row.geomJson != null) {
-        colList.push(ident("geom"));
-        paramValues.push(row.geomJson);
-        valList.push(`ST_SetSRID(ST_GeomFromGeoJSON($${paramValues.length}), ${sridNum})`);
+      for (const row of slice) {
+        const placeholders: string[] = [];
+        if (hasGeom) {
+          params.push(row.geomJson);
+          placeholders.push(`ST_SetSRID(ST_GeomFromGeoJSON($${params.length}), ${sridNum})`);
+        }
+        for (const col of attrCols) {
+          const val = row.attrs?.[col];
+          params.push(val === "" ? null : val ?? null);
+          placeholders.push(`$${params.length}`);
+        }
+        valueClauses.push(`(${placeholders.join(", ")})`);
       }
-
-      for (const [col, val] of attrEntries) {
-        colList.push(ident(col));
-        paramValues.push(val === "" ? null : val);
-        valList.push(`$${paramValues.length}`);
-      }
-
-      if (colList.length === 0) continue;
 
       await client.query(
-        `INSERT INTO ${ident(schema, table)} (${colList.join(", ")}) VALUES (${valList.join(", ")})`,
-        paramValues
+        `INSERT INTO ${ident(schema, table)} (${colList.join(", ")}) VALUES ${valueClauses.join(", ")}`,
+        params
       );
-      inserted++;
+      inserted += slice.length;
     }
 
     await client.query("COMMIT");
