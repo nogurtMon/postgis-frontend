@@ -5,24 +5,30 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Copy, Check, Trash2, RefreshCw, Plus, Loader2, ExternalLink } from "lucide-react";
+import { Copy, Check, Trash2, RefreshCw, Plus, ExternalLink } from "lucide-react";
 import type { MapLayer } from "@/lib/types";
+import { encodeShareState, type ShareState } from "@/components/share-dialog";
 
-interface ViewEntry {
+const STORAGE_KEY = "postgis_saved_views";
+
+interface StoredView {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
+  state: ShareState;
 }
 
-interface Props {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  layers: MapLayer[];
-  basemap: string;
+function readViews(): StoredView[] {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); }
+  catch { return []; }
 }
 
-function layerPayload(layers: MapLayer[], basemap: string) {
+function writeViews(views: StoredView[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(views));
+}
+
+function toState(layers: MapLayer[], basemap: string): ShareState {
   return {
     basemap,
     layers: layers.map((l) => ({
@@ -37,105 +43,65 @@ function layerPayload(layers: MapLayer[], basemap: string) {
   };
 }
 
+function shareUrl(view: StoredView): string {
+  return `${window.location.origin}/share#${encodeShareState(view.state)}`;
+}
+
+interface Props {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  layers: MapLayer[];
+  basemap: string;
+}
+
 export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props) {
-  const [views, setViews] = React.useState<ViewEntry[]>([]);
-  const [loading, setLoading] = React.useState(false);
+  const [views, setViews] = React.useState<StoredView[]>([]);
   const [newName, setNewName] = React.useState("");
-  const [creating, setCreating] = React.useState(false);
   const [showNewForm, setShowNewForm] = React.useState(false);
-  const [error, setError] = React.useState("");
   const [copied, setCopied] = React.useState<string | null>(null);
-  const [updating, setUpdating] = React.useState<string | null>(null);
-  const [deleting, setDeleting] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
-    setError("");
+    setViews(readViews());
     setShowNewForm(false);
     setNewName("");
-    fetchViews();
   }, [open]);
 
-  async function fetchViews() {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/share");
-      if (!res.ok) throw new Error("Failed to load views");
-      setViews(await res.json());
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function createView() {
+  function createView() {
     if (!newName.trim()) return;
-    setCreating(true);
-    setError("");
-    try {
-      const res = await fetch("/api/share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...layerPayload(layers, basemap), name: newName.trim() }),
-      });
-      const text = await res.text();
-      let data: any = {};
-      try { data = JSON.parse(text); } catch {}
-      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
-      setNewName("");
-      setShowNewForm(false);
-      await fetchViews();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
-    }
+    const now = new Date().toISOString();
+    const view: StoredView = {
+      id: crypto.randomUUID(),
+      name: newName.trim(),
+      createdAt: now,
+      updatedAt: now,
+      state: toState(layers, basemap),
+    };
+    const updated = [...views, view];
+    writeViews(updated);
+    setViews(updated);
+    setNewName("");
+    setShowNewForm(false);
   }
 
-  async function updateView(id: string) {
-    setUpdating(id);
-    setError("");
-    try {
-      const res = await fetch(`/api/share/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(layerPayload(layers, basemap)),
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error ?? `Error ${res.status}`);
-      }
-      await fetchViews();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setUpdating(null);
-    }
+  function updateView(id: string) {
+    const updated = views.map((v) =>
+      v.id === id ? { ...v, state: toState(layers, basemap), updatedAt: new Date().toISOString() } : v
+    );
+    writeViews(updated);
+    setViews(updated);
   }
 
-  async function deleteView(id: string) {
-    setDeleting(id);
-    setError("");
-    try {
-      await fetch(`/api/share/${id}`, { method: "DELETE" });
-      setViews((prev) => prev.filter((v) => v.id !== id));
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setDeleting(null);
-    }
+  function deleteView(id: string) {
+    const updated = views.filter((v) => v.id !== id);
+    writeViews(updated);
+    setViews(updated);
   }
 
-  function copyLink(id: string) {
-    const url = `${window.location.origin}/share/${id}`;
-    navigator.clipboard.writeText(url);
-    setCopied(id);
+  function copyLink(view: StoredView) {
+    navigator.clipboard.writeText(shareUrl(view));
+    setCopied(view.id);
     setTimeout(() => setCopied(null), 2000);
-  }
-
-  function shareUrl(id: string) {
-    return `${window.location.origin}/share/${id}`;
   }
 
   return (
@@ -144,19 +110,12 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
         <DialogHeader>
           <DialogTitle>Saved Views</DialogTitle>
           <DialogDescription>
-            Create shareable read-only map links for different audiences.
+            Create shareable read-only map links. Anyone with the link can view — no login needed.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 mt-1">
-          {error && <p className="text-xs text-destructive">{error}</p>}
-
-          {/* View list */}
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
-          ) : views.length === 0 && !showNewForm ? (
+          {views.length === 0 && !showNewForm ? (
             <p className="text-sm text-muted-foreground text-center py-4">No saved views yet.</p>
           ) : (
             <div className="space-y-1">
@@ -164,22 +123,22 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
                 <div key={v.id} className="flex items-center gap-2 rounded-md border px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{v.name}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">{shareUrl(v.id)}</p>
+                    <p className="text-[10px] text-muted-foreground">{v.state.layers.length} {v.state.layers.length === 1 ? "layer" : "layers"}</p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <a href={shareUrl(v.id)} target="_blank" rel="noopener noreferrer" title="Open view">
+                    <a href={shareUrl(v)} target="_blank" rel="noopener noreferrer" title="Open view">
                       <Button size="icon" variant="ghost" className="h-7 w-7">
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
                     </a>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Copy link" onClick={() => copyLink(v.id)}>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Copy link" onClick={() => copyLink(v)}>
                       {copied === v.id ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Update with current map state" onClick={() => updateView(v.id)} disabled={updating === v.id}>
-                      {updating === v.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Update with current map state" onClick={() => updateView(v.id)}>
+                      <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" title="Delete view" onClick={() => deleteView(v.id)} disabled={deleting === v.id}>
-                      {deleting === v.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" title="Delete view" onClick={() => deleteView(v.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </div>
@@ -187,7 +146,6 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
             </div>
           )}
 
-          {/* New view form */}
           {showNewForm && (
             <div className="flex gap-2">
               <Input
@@ -198,14 +156,11 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
                 onKeyDown={(e) => { if (e.key === "Enter") createView(); if (e.key === "Escape") setShowNewForm(false); }}
                 className="text-sm"
               />
-              <Button size="sm" onClick={createView} disabled={creating || !newName.trim()}>
-                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-              </Button>
+              <Button size="sm" onClick={createView} disabled={!newName.trim()}>Save</Button>
               <Button size="sm" variant="ghost" onClick={() => setShowNewForm(false)}>Cancel</Button>
             </div>
           )}
 
-          {/* Footer */}
           <div className="flex items-center justify-between pt-1">
             <p className="text-xs text-muted-foreground">
               {layers.length} {layers.length === 1 ? "layer" : "layers"} in current view

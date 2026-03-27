@@ -13,11 +13,11 @@ interface Props {
   basemap: string;
 }
 
-// Legacy URL-hash encode/decode kept for backward compatibility with old /share links
 export interface ShareState {
   layers: Array<{
     id: string;
     table: MapLayer["table"];
+    dsn: string;
     visible: boolean;
     style: MapLayer["style"];
     filters: MapLayer["filters"];
@@ -26,9 +26,15 @@ export interface ShareState {
   basemap: string;
 }
 
+export function encodeShareState(state: ShareState): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(state));
+  return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+}
+
 export function decodeShareState(encoded: string): ShareState | null {
   try {
-    return JSON.parse(decodeURIComponent(escape(atob(encoded))));
+    const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }

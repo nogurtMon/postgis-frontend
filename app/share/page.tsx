@@ -2,106 +2,77 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { decodeShareState } from "@/components/share-dialog";
-import { SettingsDialog } from "@/components/settings-dialog";
-import { useDsn } from "@/hooks/use-dsn";
-import { DEFAULT_STYLE, LAYER_COLORS } from "@/lib/types";
+import { DEFAULT_STYLE } from "@/lib/types";
 import type { MapLayer } from "@/lib/types";
-import type { ZoomTarget } from "@/components/maplibre-map";
-import { Button } from "@/components/ui/button";
-import { Settings, Share2 } from "lucide-react";
+import Link from "next/link";
 import { ModeToggle } from "@/components/mode-toggle";
 
 const MaplibreMap = dynamic(() => import("@/components/maplibre-map"), { ssr: false });
 
 export default function SharePage() {
-  const { dsn, setDsn, loaded } = useDsn();
-  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [basemap, setBasemap] = React.useState("liberty");
-  const [decoded, setDecoded] = React.useState(false);
-  const [zoomTarget] = React.useState<ZoomTarget | null>(null);
+  const [status, setStatus] = React.useState<"loading" | "ready" | "error">("loading");
 
-  // Decode share state from URL hash
+  const [isEmbed, setIsEmbed] = React.useState(false);
+  React.useEffect(() => {
+    try { setIsEmbed(window.self !== window.top); } catch { setIsEmbed(true); }
+  }, []);
+
   React.useEffect(() => {
     const hash = window.location.hash.slice(1);
-    if (!hash) return;
+    if (!hash) { setStatus("error"); return; }
     const state = decodeShareState(hash);
-    if (!state) return;
+    if (!state) { setStatus("error"); return; }
     setBasemap(state.basemap ?? "liberty");
-    setDecoded(true);
-    // Store layers without DSN — will be filled in when DSN is set
-    const pending = state.layers.map((l, i) => ({
+    setLayers(state.layers.map((l) => ({
       ...l,
-      dsn: "",
+      dsn: l.dsn ?? "",
       dataVersion: 0,
       style: { ...DEFAULT_STYLE, ...l.style },
       filters: l.filters ?? [],
-    }));
-    setLayers(pending as MapLayer[]);
+    })) as MapLayer[]);
+    setStatus("ready");
   }, []);
 
-  // Once DSN is known, attach it to all layers
-  React.useEffect(() => {
-    if (!dsn || !decoded) return;
-    setLayers(prev => prev.map(l => ({ ...l, dsn })));
-  }, [dsn, decoded]);
+  if (status === "loading") {
+    return <div className="h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
+  }
 
-  // Auto-open settings if no connection
-  React.useEffect(() => {
-    if (loaded && !dsn) setSettingsOpen(true);
-  }, [loaded]);
+  if (status === "error") {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center space-y-3 max-w-xs">
+          <p className="text-sm font-medium">Share link not found or invalid.</p>
+          <Link href="/map" className="text-xs text-muted-foreground underline underline-offset-2">Open app</Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen overflow-hidden grid grid-rows-[auto_1fr]">
-      <header className="bg-background border-b px-3 py-1 flex items-center justify-between gap-4 text-[11px] font-mono shrink-0">
-        <span className="flex items-center gap-1.5 font-bold tracking-widest text-primary uppercase text-xs shrink-0">
-          <img src="/favicon.ico" alt="" className="w-4 h-4 shrink-0" />
-          PostGIS-Frontend
-          <span className="text-[10px] text-muted-foreground font-normal normal-case tracking-normal ml-1">shared view</span>
-        </span>
-
-        <button
-          className="flex items-center gap-1.5 min-w-0 hover:text-foreground text-muted-foreground transition-colors"
-          onClick={() => setSettingsOpen(true)}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-500"}`} />
-          <span className="truncate max-w-xs text-xs">
-            {dsn ? "Connected" : "Connect to view layers"}
+    <div className="h-screen overflow-hidden flex flex-col">
+      {!isEmbed && (
+        <header className="bg-background border-b px-3 py-1 flex items-center justify-between gap-4 text-[11px] font-mono shrink-0">
+          <Link href="/map" className="flex items-center gap-1.5 font-bold tracking-widest text-primary uppercase text-xs shrink-0 hover:opacity-80 transition-opacity">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/favicon.ico" alt="" className="w-4 h-4 shrink-0" />
+            PostGIS-Frontend
+          </Link>
+          <span className="text-muted-foreground text-[10px]">
+            shared view · {layers.length} {layers.length === 1 ? "layer" : "layers"}
           </span>
-        </button>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <ModeToggle />
-          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setSettingsOpen(true)}>
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </header>
-
-      <div className="relative">
-        <MaplibreMap
-          layers={layers}
-          basemap={basemap}
-        />
-        {!dsn && loaded && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm">
-            <div className="text-center space-y-3 max-w-xs">
-              <Share2 className="h-8 w-8 mx-auto text-muted-foreground" />
-              <p className="text-sm font-medium">Connect your database to view this shared map</p>
-              <p className="text-xs text-muted-foreground">The layer configurations are encoded in this URL. You need database access to render the data.</p>
-              <Button size="sm" onClick={() => setSettingsOpen(true)}>Connect database</Button>
-            </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <ModeToggle />
+            <Link href="/map" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+              Open app →
+            </Link>
           </div>
-        )}
+        </header>
+      )}
+      <div className="flex-1 relative">
+        <MaplibreMap layers={layers} basemap={basemap} />
       </div>
-
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        dsn={dsn}
-        onSave={setDsn}
-        onDisconnect={() => setDsn("")}
-      />
     </div>
   );
 }
