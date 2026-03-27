@@ -1,59 +1,105 @@
 # PostGIS Frontend
 
-A web-based map viewer for PostGIS databases. Connect to any PostgreSQL/PostGIS database, browse spatial tables, and visualize them on an interactive map — no local setup required.
+A self-hosted visual interface for PostGIS databases. Connect your database and instantly visualize, style, filter, and share your spatial data — entirely in the browser.
 
-## Features
+**Your data never leaves your infrastructure.** This app is designed to be run on your own server. The hosted demo is for evaluation only — for real work, self-host it.
 
-- **Connect to any PostGIS database** via a connection string (DSN)
-- **Browse spatial tables** grouped by schema — only tables with geometry columns are shown
-- **Add layers to the map** with a single click
-- **Style layers** per geometry type:
-  - *Points* — fill color, opacity, radius, outline color, stroke width
-  - *Lines* — line color, opacity, line width
-  - *Polygons* — fill color, opacity, outline color, stroke width
-- **Data-driven radius** for point layers — scale point size by any numeric column, with configurable domain and radius range
-- **Filter layers** with SQL-style conditions (`=`, `!=`, `>`, `<`, `LIKE`, `IS NULL`, etc.)
-- **Reorder and toggle** layer visibility
-- **Click any feature** to inspect its properties
-- **Dark/light mode** toggle
+---
 
-## Getting Started
+## Deploy with Docker
 
-### Prerequisites
+**1. Generate an encryption key**
 
-- Node.js 18+
-- A PostgreSQL database with the [PostGIS](https://postgis.net/) extension enabled
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
-### Local Development
+**2. Create a `.env` file**
+
+```env
+DSN_ENCRYPTION_KEY=your_64_char_hex_key_here
+```
+
+**3. Run it**
+
+```bash
+docker compose up -d
+```
+
+Open `http://localhost:3000`. To expose it publicly, put it behind a reverse proxy with HTTPS. Example [Caddy](https://caddyserver.com) config:
+
+```
+your.domain.com {
+    reverse_proxy localhost:3000
+}
+```
+
+---
+
+## Connect your database
+
+Paste a `postgres://` connection string in the settings panel. For shared map views, use a **read-only PostgreSQL role** so viewers can only read:
+
+```sql
+CREATE ROLE viewer LOGIN PASSWORD 'strong-password';
+GRANT CONNECT ON DATABASE yourdb TO viewer;
+GRANT USAGE ON SCHEMA public TO viewer;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO viewer;
+```
+
+---
+
+## What you can do
+
+- **Visualize** spatial tables as interactive map layers — points, lines, and polygons
+- **Style** by color, opacity, and stroke. Scale point radius or line width by any numeric column. Classify fills by category.
+- **Filter** by any attribute without writing SQL
+- **Import** GeoPackage, GeoJSON, Shapefile, and KML directly into PostGIS
+- **Ingest** ArcGIS Feature Services directly into PostGIS
+- **Manage** tables — rename, add primary keys, create spatial indexes, cast geometry types, edit rows
+- **Share** named map views as public read-only links — no credentials required to view
+
+---
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DSN_ENCRYPTION_KEY` | Yes (production) | 64 hex chars (32 bytes). Encrypts database connection strings. Generate with the command above. |
+| `PORT` | No | Port to listen on. Default: `3000`. |
+
+---
+
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), click the settings icon, and enter your database connection string:
+No `DSN_ENCRYPTION_KEY` needed for development — a random key is auto-generated and saved to `.dsn-dev-key`.
+
+---
+
+## Security model
+
+Database credentials are AES-256-GCM encrypted before any server communication. Connection strings are never logged or written to disk. The person running the server can in principle access your database — **this is why self-hosting matters**. If you connect to someone else's hosted instance, use a read-only database role.
+
+---
+
+## How it works
 
 ```
-postgresql://user:password@host:5432/dbname
-```
-
-### Deploy to Vercel
-
-The app is fully serverless-compatible. Tiles are served directly from PostGIS via Next.js API routes — no additional infrastructure needed.
-
-## How It Works
-
-Spatial tables are discovered by querying `pg_catalog` for geometry/geography columns. Tiles are generated on-demand using PostGIS's `ST_AsMVT` / `ST_AsMVTGeom` functions and rendered on the client with [deck.gl](https://deck.gl) (MVTLayer) on top of a [MapLibre GL](https://maplibre.org/) base map.
-
-```
-Browser (MapLibre + deck.gl)
+Browser (MapLibre GL + deck.gl)
         ↕  MVT tiles
 Next.js API (/api/pg/tiles)
         ↕  ST_AsMVT queries
   PostgreSQL + PostGIS
 ```
 
-## Tech Stack
+Spatial tables are discovered via `pg_catalog`. Tiles are generated on-demand using `ST_AsMVT` / `ST_AsMVTGeom` and rendered with [deck.gl](https://deck.gl) MVTLayer on a [MapLibre GL](https://maplibre.org/) base map.
+
+## Tech stack
 
 | Layer | Library |
 |---|---|
@@ -62,4 +108,3 @@ Next.js API (/api/pg/tiles)
 | Tile rendering | deck.gl MVTLayer |
 | Database client | node-postgres (pg) |
 | UI | shadcn/ui + Tailwind CSS |
-| Theming | next-themes |

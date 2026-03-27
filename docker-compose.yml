@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DSN_ENCRYPTION_KEY=${DSN_ENCRYPTION_KEY}
+    restart: unless-stopped
