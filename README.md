@@ -12,9 +12,9 @@ Your database credentials are encrypted client-side and never stored server-side
 
 ### Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/nogurtMon/postgis-frontend&env=DSN_ENCRYPTION_KEY&envDescription=64%20hex%20chars%20(32%20bytes).%20Generate%20with%3A%20node%20-e%20%22console.log(require(%27crypto%27).randomBytes(32).toString(%27hex%27))%22)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/nogurtMon/postgis-frontend&env=DSN_ENCRYPTION_KEY,APP_PASSWORD&envDescription=DSN_ENCRYPTION_KEY%3A%2064%20hex%20chars%20%E2%80%94%20generate%20with%20node%20-e%20%22console.log(require('crypto').randomBytes(32).toString('hex'))%22.%20APP_PASSWORD%3A%20password%20to%20access%20the%20app.)
 
-Fill in `DSN_ENCRYPTION_KEY` when prompted. Add a custom domain in your Vercel project settings.
+Fill in both env vars when prompted. Add a custom domain in your Vercel project settings.
 
 **Generate a key:**
 ```bash
@@ -36,6 +36,7 @@ sudo usermod -aG docker $USER && newgrp docker
 git clone https://github.com/nogurtMon/postgis-frontend.git
 cd postgis-frontend
 node -e "console.log('DSN_ENCRYPTION_KEY=' + require('crypto').randomBytes(32).toString('hex'))" > .env
+echo "APP_PASSWORD=yourpassword" >> .env
 
 # Run
 docker compose up -d
