@@ -141,6 +141,188 @@ function inferColMappings(features: any[]): ColMapping[] {
     });
 }
 
+// ─── CSV / XLSX helpers ───────────────────────────────────────────────────────
+
+const LAT_COLS = new Set(["latitude", "lat", "y", "northing"]);
+const LON_COLS = new Set(["longitude", "lon", "lng", "long", "x", "easting"]);
+const WKT_COLS = new Set(["wkt_geometry", "wkt", "geometry", "geom", "the_geom", "shape"]);
+
+function findCol(headers: string[], candidates: Set<string>): string | null {
+  for (const h of headers) {
+    if (candidates.has(h.toLowerCase().trim())) return h;
+  }
+  return null;
+}
+
+// Minimal WKT → GeoJSON geometry (handles Point, LineString, Polygon, Multi*)
+function wktToGeoJSON(wkt: string): object | null {
+  const s = wkt.trim();
+  const m = s.match(/^(\w+)\s*(?:Z\s*)?\(([\s\S]+)\)$/i);
+  if (!m) return null;
+  const type = m[1].toUpperCase();
+  const body = m[2];
+
+  function parseCoord(pair: string): number[] {
+    const parts = pair.trim().split(/\s+/);
+    return [parseFloat(parts[0]), parseFloat(parts[1])];
+  }
+  function parseRing(ringStr: string): number[][] {
+    return ringStr.trim().split(/,/).map(parseCoord);
+  }
+
+  if (type === "POINT") {
+    const coords = parseCoord(body);
+    if (coords.some(isNaN)) return null;
+    return { type: "Point", coordinates: coords };
+  }
+  if (type === "LINESTRING") {
+    return { type: "LineString", coordinates: parseRing(body) };
+  }
+  if (type === "POLYGON") {
+    const rings = body.split(/\)\s*,\s*\(/).map((r) => parseRing(r.replace(/^\s*\(|\)\s*$/g, "")));
+    return { type: "Polygon", coordinates: rings };
+  }
+  if (type === "MULTIPOINT") {
+    const pts = body.split(/\)\s*,\s*\(/).map((p) => parseCoord(p.replace(/^\s*\(|\)\s*$/g, "").trim()));
+    return { type: "MultiPoint", coordinates: pts };
+  }
+  if (type === "MULTILINESTRING") {
+    const lines = body.split(/\)\s*,\s*\(/).map((l) => parseRing(l.replace(/^\s*\(|\)\s*$/g, "")));
+    return { type: "MultiLineString", coordinates: lines };
+  }
+  if (type === "MULTIPOLYGON") {
+    const polys = body.split(/\)\s*\)\s*,\s*\(\s*\(/).map((poly) => {
+      const clean = poly.replace(/^\s*\(|\)\s*$/g, "");
+      return clean.split(/\)\s*,\s*\(/).map((r) => parseRing(r.replace(/^\s*\(|\)\s*$/g, "")));
+    });
+    return { type: "MultiPolygon", coordinates: polys };
+  }
+  return null;
+}
+
+function rowsToFeatures(
+  rows: Record<string, string>[],
+  latCol: string | null,
+  lonCol: string | null,
+  wktCol: string | null,
+  skipCols: Set<string>,
+): { features: any[]; skipped: number } {
+  let skipped = 0;
+  const features: any[] = [];
+  for (const row of rows) {
+    let geometry: object | null = null;
+    if (wktCol) {
+      const wkt = row[wktCol]?.trim();
+      if (wkt) geometry = wktToGeoJSON(wkt);
+    } else if (latCol && lonCol) {
+      const lat = parseFloat(row[latCol]);
+      const lon = parseFloat(row[lonCol]);
+      if (!isNaN(lat) && !isNaN(lon)) geometry = { type: "Point", coordinates: [lon, lat] };
+    }
+    if (!geometry) { skipped++; continue; }
+    const props: Record<string, any> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!skipCols.has(k)) props[k] = v === "" ? null : v;
+    }
+    features.push({ type: "Feature", geometry, properties: props });
+  }
+  return { features, skipped };
+}
+
+function parseCSVText(text: string): Record<string, string>[] {
+  const lines = text.split(/\r?\n/);
+  if (!lines.length) return [];
+  // Simple CSV parser — handles quoted fields
+  function parseLine(line: string): string[] {
+    const fields: string[] = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQ = false; }
+        else { cur += ch; }
+      } else {
+        if (ch === '"') { inQ = true; }
+        else if (ch === ",") { fields.push(cur); cur = ""; }
+        else { cur += ch; }
+      }
+    }
+    fields.push(cur);
+    return fields;
+  }
+  const headers = parseLine(lines[0]);
+  const rows: Record<string, string>[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const vals = parseLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((h, idx) => { row[h] = vals[idx] ?? ""; });
+    rows.push(row);
+  }
+  return rows;
+}
+
+async function parseCSV(file: File): Promise<ParsedLayer[]> {
+  const text = await file.text();
+  const rows = parseCSVText(text);
+  if (!rows.length) throw new Error("CSV file is empty or has no data rows");
+  const headers = Object.keys(rows[0]);
+  const latCol = findCol(headers, LAT_COLS);
+  const lonCol = findCol(headers, LON_COLS);
+  const wktCol = findCol(headers, WKT_COLS);
+  if (!wktCol && (!latCol || !lonCol))
+    throw new Error(
+      "Could not find coordinate columns. Expected latitude/longitude columns (lat, latitude, y / lon, longitude, x) or a WKT column (wkt_geometry, wkt, geom)."
+    );
+  const skipCols = new Set<string>([
+    ...(latCol ? [latCol] : []),
+    ...(lonCol ? [lonCol] : []),
+    ...(wktCol ? [wktCol] : []),
+  ]);
+  const { features } = rowsToFeatures(rows, latCol, lonCol, wktCol, skipCols);
+  if (!features.length) throw new Error("No valid geometries found in CSV");
+  const name = file.name.replace(/\.[^.]+$/, "");
+  return [{ name, features, geometryType: wktCol ? detectGeomType(features) : "Point", srid: 4326 }];
+}
+
+async function parseXLSX(file: File): Promise<ParsedLayer[]> {
+  const XLSX = (await import("xlsx")).default;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const layers: ParsedLayer[] = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    if (!rows.length) continue;
+    const headers = Object.keys(rows[0]);
+    const latCol = findCol(headers, LAT_COLS);
+    const lonCol = findCol(headers, LON_COLS);
+    const wktCol = findCol(headers, WKT_COLS);
+    if (!wktCol && (!latCol || !lonCol)) continue; // skip sheets without geo cols
+    const skipCols = new Set<string>([
+      ...(latCol ? [latCol] : []),
+      ...(lonCol ? [lonCol] : []),
+      ...(wktCol ? [wktCol] : []),
+    ]);
+    const stringRows = rows.map((r) => {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(r)) out[k] = v == null ? "" : String(v);
+      return out;
+    });
+    const { features } = rowsToFeatures(stringRows, latCol, lonCol, wktCol, skipCols);
+    if (!features.length) continue;
+    layers.push({ name: sheetName, features, geometryType: wktCol ? detectGeomType(features) : "Point", srid: 4326 });
+  }
+  if (!layers.length)
+    throw new Error(
+      "No sheets with coordinate columns found. Expected latitude/longitude columns (lat, latitude / lon, longitude) or a WKT column (wkt_geometry, wkt, geom)."
+    );
+  return layers;
+}
+
 // GPKG binary geometry header → WKB bytes
 function gpkgGeomToWkb(data: Uint8Array): Uint8Array | null {
   if (data.length < 8 || data[0] !== 0x47 || data[1] !== 0x50) return null;
@@ -310,6 +492,8 @@ async function parseFile(file: File): Promise<ParsedLayer[]> {
   if (ext === "geojson") return parseGeoJSON(file);
   if (ext === "kml") return parseKML(file);
   if (ext === "shp" || ext === "zip") return parseShapefile(file);
+  if (ext === "csv") return parseCSV(file);
+  if (ext === "xlsx" || ext === "xls") return parseXLSX(file);
   throw new Error(`Unsupported file type: .${ext}`);
 }
 
@@ -821,20 +1005,25 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
             <div className="space-y-4 mt-2">
               {(filePhase === "idle" || filePhase === "parsing") && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="file-input" className="text-xs">Supported formats: .gpkg, .geojson, .kml, .shp, .zip</Label>
+                  <Label htmlFor="file-input" className="text-xs">Supported formats: .gpkg, .geojson, .kml, .shp, .zip, .csv, .xlsx</Label>
                   <label htmlFor="file-input"
                     className="flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground cursor-pointer hover:bg-muted/40 transition-colors">
                     {filePhase === "parsing" ? "Reading file…" : (
                       <><span>Click to select or drag & drop</span>
-                      <span className="text-xs font-mono">.gpkg .geojson .kml .shp .zip</span></>
+                      <span className="text-xs font-mono">.gpkg .geojson .kml .shp .zip .csv .xlsx</span></>
                     )}
                     <input id="file-input" type="file"
-                      accept=".gpkg,.geojson,.kml,.shp,.zip"
+                      accept=".gpkg,.geojson,.kml,.shp,.zip,.csv,.xlsx,.xls"
                       className="sr-only"
                       disabled={filePhase === "parsing"}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
                     />
                   </label>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <span className="font-semibold">CSV / XLSX:</span> must have{" "}
+                    <span className="font-mono">latitude</span> + <span className="font-mono">longitude</span> columns (or <span className="font-mono">lat</span>/<span className="font-mono">lon</span>, <span className="font-mono">y</span>/<span className="font-mono">x</span>),
+                    or a <span className="font-mono">wkt_geometry</span> column with WKT values. All other columns become attributes.
+                  </p>
                 </div>
               )}
 
