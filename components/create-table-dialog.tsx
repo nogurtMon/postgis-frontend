@@ -289,7 +289,8 @@ async function parseCSV(file: File): Promise<ParsedLayer[]> {
 }
 
 async function parseXLSX(file: File): Promise<ParsedLayer[]> {
-  const XLSX = (await import("xlsx")).default;
+  const mod = await import("xlsx");
+  const XLSX = mod.default ?? mod;
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
   const layers: ParsedLayer[] = [];
