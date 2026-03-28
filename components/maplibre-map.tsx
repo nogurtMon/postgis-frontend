@@ -75,6 +75,8 @@ interface Selection { feature: any; layer: MapLayer; }
 export type ZoomTarget = { bounds: [[number, number], [number, number]] };
 
 // ─── props ────────────────────────────────────────────────────────────────────
+export interface MapView { longitude: number; latitude: number; zoom: number; }
+
 interface Props {
   layers: MapLayer[];
   activeLayerId?: string | null;
@@ -82,6 +84,8 @@ interface Props {
   onLayerDataChanged?: (layerId: string) => void;
   flyTo?: ZoomTarget | null;
   basemap?: string;
+  initialView?: MapView;
+  onViewChange?: (view: MapView) => void;
 }
 
 // ─── component ────────────────────────────────────────────────────────────────
@@ -89,6 +93,8 @@ export default function MaplibreMap({
   layers,
   flyTo,
   basemap: basemapProp,
+  initialView,
+  onViewChange,
 }: Props) {
   const mapRef = React.useRef<any>(null);
   const basemap = basemapProp ?? "";
@@ -245,7 +251,8 @@ export default function MaplibreMap({
         ref={mapRef}
         onLoad={onLoad}
         onZoom={(e) => setZoom(e.viewState.zoom)}
-        initialViewState={{ longitude: -98.5556199, latitude: 39.8097343, zoom: 4 }}
+        initialViewState={initialView ?? { longitude: -98.5556199, latitude: 39.8097343, zoom: 4 }}
+        onMoveEnd={(e) => onViewChange?.({ longitude: e.viewState.longitude, latitude: e.viewState.latitude, zoom: e.viewState.zoom })}
         style={{ width: "100%", height: "100%" }}
         mapStyle={resolveBasemapStyle()}
       />

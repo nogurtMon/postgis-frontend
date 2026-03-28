@@ -24,6 +24,7 @@ export interface ShareState {
     geomTypeOverride?: string | null;
   }>;
   basemap: string;
+  view?: { longitude: number; latitude: number; zoom: number };
 }
 
 export function encodeShareState(state: ShareState): string {

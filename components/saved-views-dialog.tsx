@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Copy, Check, Trash2, RefreshCw, Plus, ExternalLink } from "lucide-react";
 import type { MapLayer } from "@/lib/types";
 import { encodeShareState, type ShareState } from "@/components/share-dialog";
+import type { MapView } from "@/components/maplibre-map";
 
 const STORAGE_KEY = "postgis_saved_views";
 
@@ -28,9 +29,10 @@ function writeViews(views: StoredView[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(views));
 }
 
-function toState(layers: MapLayer[], basemap: string): ShareState {
+function toState(layers: MapLayer[], basemap: string, view?: MapView): ShareState {
   return {
     basemap,
+    view,
     layers: layers.map((l) => ({
       id: l.id,
       table: l.table,
@@ -52,9 +54,10 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   layers: MapLayer[];
   basemap: string;
+  view?: MapView;
 }
 
-export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props) {
+export function SavedViewsDialog({ open, onOpenChange, layers, basemap, view }: Props) {
   const [views, setViews] = React.useState<StoredView[]>([]);
   const [newName, setNewName] = React.useState("");
   const [showNewForm, setShowNewForm] = React.useState(false);
@@ -70,14 +73,14 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
   function createView() {
     if (!newName.trim()) return;
     const now = new Date().toISOString();
-    const view: StoredView = {
+    const storedView: StoredView = {
       id: crypto.randomUUID(),
       name: newName.trim(),
       createdAt: now,
       updatedAt: now,
-      state: toState(layers, basemap),
+      state: toState(layers, basemap, view),
     };
-    const updated = [...views, view];
+    const updated = [...views, storedView];
     writeViews(updated);
     setViews(updated);
     setNewName("");
@@ -86,7 +89,7 @@ export function SavedViewsDialog({ open, onOpenChange, layers, basemap }: Props)
 
   function updateView(id: string) {
     const updated = views.map((v) =>
-      v.id === id ? { ...v, state: toState(layers, basemap), updatedAt: new Date().toISOString() } : v
+      v.id === id ? { ...v, state: toState(layers, basemap, view), updatedAt: new Date().toISOString() } : v
     );
     writeViews(updated);
     setViews(updated);

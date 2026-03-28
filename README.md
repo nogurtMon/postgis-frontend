@@ -77,6 +77,7 @@ No `DSN_ENCRYPTION_KEY` needed — a key is auto-generated locally.
 | Variable | Required | Description |
 |---|---|---|
 | `DSN_ENCRYPTION_KEY` | Yes (production) | 64 hex chars. Encrypts database connection strings. |
+| `APP_PASSWORD` | Recommended | Password to access the app. Share links at `/share` remain public. If unset, no auth is required. |
 | `PORT` | No | Default: `3000`. |
 
 ---

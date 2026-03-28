@@ -12,6 +12,7 @@ const MaplibreMap = dynamic(() => import("@/components/maplibre-map"), { ssr: fa
 export default function SharePage() {
   const [layers, setLayers] = React.useState<MapLayer[]>([]);
   const [basemap, setBasemap] = React.useState("liberty");
+  const [initialView, setInitialView] = React.useState<{ longitude: number; latitude: number; zoom: number } | undefined>(undefined);
   const [status, setStatus] = React.useState<"loading" | "ready" | "error">("loading");
 
   const [isEmbed, setIsEmbed] = React.useState(false);
@@ -25,6 +26,7 @@ export default function SharePage() {
     const state = decodeShareState(hash);
     if (!state) { setStatus("error"); return; }
     setBasemap(state.basemap ?? "liberty");
+    if (state.view) setInitialView(state.view);
     setLayers(state.layers.map((l) => ({
       ...l,
       dsn: l.dsn ?? "",
@@ -62,16 +64,11 @@ export default function SharePage() {
           <span className="text-muted-foreground text-[10px]">
             shared view · {layers.length} {layers.length === 1 ? "layer" : "layers"}
           </span>
-          <div className="flex items-center gap-2 shrink-0">
-            <ModeToggle />
-            <Link href="/map" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors">
-              Open app →
-            </Link>
-          </div>
+          <ModeToggle />
         </header>
       )}
       <div className="flex-1 relative">
-        <MaplibreMap layers={layers} basemap={basemap} />
+        <MaplibreMap layers={layers} basemap={basemap} initialView={initialView} />
       </div>
     </div>
   );

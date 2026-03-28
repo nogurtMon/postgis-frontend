@@ -7,7 +7,7 @@ import { TableSidebar } from "@/components/table-sidebar";
 import { useDsn } from "@/hooks/use-dsn";
 import { LAYER_COLORS, DEFAULT_STYLE } from "@/lib/types";
 import type { TableRow, MapLayer } from "@/lib/types";
-import type { ZoomTarget } from "@/components/maplibre-map";
+import type { ZoomTarget, MapView } from "@/components/maplibre-map";
 
 import { Button } from "@/components/ui/button";
 import { Settings, Share2 } from "lucide-react";
@@ -72,6 +72,7 @@ export default function Home() {
   const [activeLayerId, setActiveLayerId] = React.useState<string | null>(null);
   const [zoomTarget, setZoomTarget] = React.useState<ZoomTarget | null>(null);
   const [basemap, setBasemap] = React.useState("liberty");
+  const [mapView, setMapView] = React.useState<MapView | undefined>(undefined);
   async function zoomToLayer(layer: MapLayer) {
     try {
       const res = await fetch("/api/pg/extent", {
@@ -225,6 +226,7 @@ export default function Home() {
             onLayerDataChanged={onLayerDataChanged}
             flyTo={zoomTarget}
             basemap={basemap}
+            onViewChange={setMapView}
           />
         </div>
       </div>
@@ -241,6 +243,7 @@ export default function Home() {
         onOpenChange={setShareOpen}
         layers={layers}
         basemap={basemap}
+        view={mapView}
       />
     </div>
   );
