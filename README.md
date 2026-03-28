@@ -2,31 +2,69 @@
 
 A self-hosted visual interface for PostGIS databases. Connect your database and instantly visualize, style, filter, and share your spatial data — entirely in the browser.
 
-**Your data never leaves your infrastructure.** This app is designed to be run on your own server. The hosted demo is for evaluation only — for real work, self-host it.
+**Your data never leaves your infrastructure.** Deploy on Vercel, Docker, or any VPS — your database credentials are encrypted in the browser and never stored server-side.
+
+---
+
+## Deploy
+
+### Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/nogurtMon/postgis-frontend&env=DSN_ENCRYPTION_KEY&envDescription=64%20hex%20chars%20(32%20bytes).%20Generate%20with%3A%20node%20-e%20%22console.log(require(%27crypto%27).randomBytes(32).toString(%27hex%27))%22)
+
+Click the button, fill in `DSN_ENCRYPTION_KEY` when prompted, and deploy. Add a custom domain in your Vercel project settings.
+
+> **Generate a key:** `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
 ---
 
 ## Deploy with Docker
 
-**1. Generate an encryption key**
+### 1. Install Docker
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+curl -fsSL https://get.docker.com | sh
 ```
 
-**2. Create a `.env` file**
-
-```env
-DSN_ENCRYPTION_KEY=your_64_char_hex_key_here
-```
-
-**3. Run it**
+Add your user to the docker group so you don't need `sudo`:
 
 ```bash
+sudo usermod -aG docker $USER
+```
+
+Then apply the group change in your current terminal session:
+
+```bash
+newgrp docker
+```
+
+> **Note:** `newgrp docker` only applies to the current terminal session. To make it permanent, log out and log back in.
+
+### 2. Clone the repo
+
+```bash
+git clone https://github.com/nogurtMon/postgis-frontend.git
+cd postgis-frontend
+```
+
+### 3. Generate an encryption key and create a `.env` file
+
+```bash
+node -e "console.log('DSN_ENCRYPTION_KEY=' + require('crypto').randomBytes(32).toString('hex'))" > .env
+```
+
+### 4. Start the app
+
+```bash
+newgrp docker
 docker compose up -d
 ```
 
-Open `http://localhost:3000`. To expose it publicly, put it behind a reverse proxy with HTTPS. Example [Caddy](https://caddyserver.com) config:
+Open `http://localhost:3000`.
+
+### Expose publicly with HTTPS
+
+Put it behind a reverse proxy. Example [Caddy](https://caddyserver.com) config:
 
 ```
 your.domain.com {
@@ -34,11 +72,19 @@ your.domain.com {
 }
 ```
 
+### Update to latest version
+
+```bash
+git pull
+docker compose down
+docker compose up -d --build
+```
+
 ---
 
 ## Connect your database
 
-Paste a `postgres://` connection string in the settings panel. For shared map views, use a **read-only PostgreSQL role** so viewers can only read:
+Paste a `postgres://` connection string in the settings panel. For shared map views, use a **read-only PostgreSQL role**:
 
 ```sql
 CREATE ROLE viewer LOGIN PASSWORD 'strong-password';
@@ -65,7 +111,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO viewer;
 
 | Variable | Required | Description |
 |---|---|---|
-| `DSN_ENCRYPTION_KEY` | Yes (production) | 64 hex chars (32 bytes). Encrypts database connection strings. Generate with the command above. |
+| `DSN_ENCRYPTION_KEY` | Yes (production) | 64 hex chars (32 bytes). Encrypts database connection strings. |
 | `PORT` | No | Port to listen on. Default: `3000`. |
 
 ---
@@ -98,6 +144,8 @@ Next.js API (/api/pg/tiles)
 ```
 
 Spatial tables are discovered via `pg_catalog`. Tiles are generated on-demand using `ST_AsMVT` / `ST_AsMVTGeom` and rendered with [deck.gl](https://deck.gl) MVTLayer on a [MapLibre GL](https://maplibre.org/) base map.
+
+---
 
 ## Tech stack
 
