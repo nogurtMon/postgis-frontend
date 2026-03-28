@@ -1,11 +1,10 @@
 "use client";
-export const dynamic = "force-dynamic";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [password, setPassword] = React.useState("");
@@ -30,25 +29,33 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={submit} className="w-full max-w-xs space-y-3">
+      <div className="flex items-center gap-2 mb-6">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/favicon.ico" alt="" className="w-5 h-5" />
+        <span className="font-semibold tracking-tight text-sm">PostGIS Frontend</span>
+      </div>
+      <Input
+        type="password"
+        placeholder="Password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        autoFocus
+      />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <Button type="submit" className="w-full" disabled={loading || !password}>
+        {loading ? "..." : "Sign in"}
+      </Button>
+    </form>
+  );
+}
+
+export default function LoginPage() {
+  return (
     <div className="h-screen flex items-center justify-center">
-      <form onSubmit={submit} className="w-full max-w-xs space-y-3">
-        <div className="flex items-center gap-2 mb-6">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/favicon.ico" alt="" className="w-5 h-5" />
-          <span className="font-semibold tracking-tight text-sm">PostGIS Frontend</span>
-        </div>
-        <Input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoFocus
-        />
-        {error && <p className="text-xs text-destructive">{error}</p>}
-        <Button type="submit" className="w-full" disabled={loading || !password}>
-          {loading ? "..." : "Sign in"}
-        </Button>
-      </form>
+      <React.Suspense>
+        <LoginForm />
+      </React.Suspense>
     </div>
   );
 }
