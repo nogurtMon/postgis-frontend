@@ -1,5 +1,7 @@
 # PostGIS Frontend
 
+![PostGIS Frontend](public/Postgresql_elephant.png)
+
 A self-hosted visual interface for PostGIS databases. Visualize, style, filter, and share spatial data — directly in your browser.
 
 Your database credentials are encrypted client-side and never stored server-side.
