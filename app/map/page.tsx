@@ -206,6 +206,7 @@ export default function Home() {
       <div className="flex overflow-hidden">
         <TableSidebar
           dsn={token}
+          dsnLoaded={loaded}
           layers={layers}
           onAddLayer={addLayer}
           onRemoveLayer={removeLayer}

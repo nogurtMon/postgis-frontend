@@ -2,7 +2,7 @@
 
 <img src="public/postgres-frontend-logo1.png" width="300" />
 
-A self-hosted visual interface for PostGIS databases. Visualize, style, filter, and share spatial data — directly in your browser.
+A self-hosted visual interface for PostGIS databases. Visualize, style, filter, and share spatial data — directly from your browser.
 
 Your database credentials are encrypted client-side and never stored server-side.
 

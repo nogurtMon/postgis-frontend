@@ -23,6 +23,7 @@ import {
 
 interface Props {
   dsn: string;
+  dsnLoaded?: boolean;
   layers: MapLayer[];
   onAddLayer: (table: TableRow) => void;
   onRemoveLayer: (id: string) => void;
@@ -549,7 +550,7 @@ function LayerFilterEditor({
 }
 
 export function TableSidebar({
-  dsn, layers,
+  dsn, dsnLoaded, layers,
   onAddLayer, onRemoveLayer, onUpdateLayer, onReorderLayers,
   activeLayerId, onActiveLayerChange, onZoomToLayer, onZoomToTable, onOpenSettings,
   basemap, onBasemapChange,
@@ -790,7 +791,7 @@ export function TableSidebar({
             <span suppressHydrationWarning className={`w-2 h-2 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-400"}`} title={dsn ? "Connected" : "Not connected"} />
           </button>
 
-          <p suppressHydrationWarning className={`pl-8 py-2 text-xs text-muted-foreground/60 ${dsn ? "hidden" : ""}`}>Right-click to connect…</p>
+          {dsnLoaded && !dsn && <p className="pl-8 py-2 text-xs text-muted-foreground/60">Right-click to connect…</p>}
           {loading && <p className="pl-8 py-1.5 text-xs text-muted-foreground">Loading…</p>}
           {error && (() => { const { title, detail } = friendlyConnError(error); return (
             <div className="mx-3 my-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 space-y-0.5">
