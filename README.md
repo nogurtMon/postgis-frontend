@@ -1,6 +1,6 @@
 # PostGIS Frontend
 
-<img src="public/postgres-frontend-logo1.png" width="400" />
+<img src="public/postgres-frontend-logo1.png" width="300" />
 
 A self-hosted visual interface for PostGIS databases. Visualize, style, filter, and share spatial data — directly in your browser.
 
