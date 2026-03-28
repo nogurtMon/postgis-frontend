@@ -1,6 +1,6 @@
 # PostGIS Frontend
 
-![PostGIS Frontend](public/Postgresql_elephant.png)
+![PostGIS Frontend](public/postgres-frontend-logo1.png)
 
 A self-hosted visual interface for PostGIS databases. Visualize, style, filter, and share spatial data — directly in your browser.
 
