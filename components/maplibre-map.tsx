@@ -286,7 +286,7 @@ export default function MaplibreMap({
                 {Object.entries(selection.feature.properties || {}).map(([key, value]) => (
                   <div key={key} className="flex items-start justify-between gap-4 py-2 border-b last:border-0">
                     <span className="text-sm font-medium capitalize shrink-0 max-w-[45%] truncate" title={key}>{key.replace(/_/g, " ")}</span>
-                    <span className="text-sm text-muted-foreground text-right break-all max-w-[50%]" title={String(value)}>{String(value)}</span>
+                    <span className="text-sm text-muted-foreground text-right break-words whitespace-pre-wrap max-w-[50%]" title={String(value)}>{String(value)}</span>
                   </div>
                 ))}
               </div>
