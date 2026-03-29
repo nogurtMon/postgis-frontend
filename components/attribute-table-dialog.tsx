@@ -9,15 +9,7 @@ import { ChevronUp, ChevronDown, Search, X, Loader2, Filter, Columns, Plus } fro
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-
-type AttrOperator = "ilike" | "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "is_null" | "is_not_null" | "starts_with" | "in" | "not_in";
-
-interface AttrFilter {
-  id: string;
-  column: string;
-  operator: AttrOperator;
-  value: string;
-}
+import type { AttrOperator, AttrFilter } from "@/lib/types";
 
 const OPERATOR_LABELS: Record<AttrOperator, string> = {
   ilike: "contains",
@@ -32,6 +24,7 @@ const OPERATOR_LABELS: Record<AttrOperator, string> = {
   starts_with: "starts with",
   in: "in",
   not_in: "not in",
+  date_between: "between dates",
 };
 const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
 const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];
