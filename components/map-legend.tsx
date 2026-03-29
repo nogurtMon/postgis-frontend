@@ -142,7 +142,7 @@ export function MapLegend({ layers }: { layers: MapLayer[] }) {
   if (visible.length === 0) return null;
 
   return (
-    <div className="absolute bottom-14 left-2 z-10 bg-background/90 backdrop-blur-sm rounded-md border shadow-sm text-foreground max-w-52">
+    <div className="absolute bottom-10 left-2 z-10 bg-background/90 backdrop-blur-sm rounded-md border shadow-sm text-foreground max-w-52">
       <button
         onClick={() => setCollapsed((c) => !c)}
         className="flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"

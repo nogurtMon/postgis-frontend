@@ -10,8 +10,8 @@ function readLS(key: string) {
 }
 
 export function useDsn() {
-  const [dsn, setDsnState] = useState<string>(() => readLS(DSN_KEY));
-  const [token, setTokenState] = useState<string>(() => readLS(TOKEN_KEY));
+  const [dsn, setDsnState] = useState<string>("");
+  const [token, setTokenState] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {

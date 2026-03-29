@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Settings, Share2 } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 import { SavedViewsDialog } from "@/components/saved-views-dialog";
+import { BASEMAP_OPTIONS } from "@/lib/types";
 
 function dbLabel(dsn: string) {
   try {
@@ -180,9 +181,9 @@ export default function Home() {
           onClick={() => setSettingsOpen(true)}
           title="Connection settings"
         >
-          <span suppressHydrationWarning className={`w-1.5 h-1.5 rounded-full shrink-0 ${dsn ? "bg-green-500" : "bg-red-500"}`} />
-          <span suppressHydrationWarning className="truncate max-w-xs">
-            {dsn ? dbLabel(dsn) : "NOT CONNECTED"}
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${!loaded ? "bg-muted-foreground/40" : dsn ? "bg-green-500" : "bg-red-500"}`} />
+          <span className="truncate max-w-xs">
+            {!loaded ? "…" : dsn ? dbLabel(dsn) : "NOT CONNECTED"}
           </span>
         </button>
 
@@ -229,6 +230,22 @@ export default function Home() {
             basemap={basemap}
             onViewChange={setMapView}
           />
+          {/* Basemap switcher — floating over map, bottom-right */}
+          <div className="absolute top-2 right-2 z-10 flex gap-1 bg-background/80 backdrop-blur-sm border rounded-md px-1.5 py-1 shadow-sm">
+            {BASEMAP_OPTIONS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setBasemap(key)}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  basemap === key
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

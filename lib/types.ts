@@ -73,9 +73,7 @@ export interface MapLayer {
 
 
 export const BASEMAP_OPTIONS: { key: string; label: string }[] = [
-  { key: "liberty",   label: "Liberty"   },
-  { key: "bright",    label: "Bright"    },
-  { key: "positron",  label: "Positron"  },
+  { key: "liberty",   label: "Street"    },
   { key: "satellite", label: "Satellite" },
 ];
 
