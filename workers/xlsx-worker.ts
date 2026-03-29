@@ -56,7 +56,7 @@ let importGen: Generator<WorkerOut, void, unknown> | null = null;
 
 function* makeImportGen(buffer: ArrayBuffer, sheetName: string, latCol: string | null, lonCol: string | null, wktCol: string | null, skipCols: Set<string>): Generator<WorkerOut, void, unknown> {
   try {
-    const wb = XLSX.read(buffer, { type: "array" });
+    const wb = XLSX.read(buffer, { type: "array", cellDates: true });
     const ws = wb.Sheets[sheetName] ?? wb.Sheets[wb.SheetNames[0]];
     const allRows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
     const total = allRows.length;
@@ -64,7 +64,11 @@ function* makeImportGen(buffer: ArrayBuffer, sheetName: string, latCol: string |
     for (let i = 0; i < total; i += CHUNK) {
       const chunk: Record<string, string>[] = allRows.slice(i, i + CHUNK).map((r) => {
         const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(r)) out[k] = v == null ? "" : String(v);
+        for (const [k, v] of Object.entries(r)) {
+          if (v == null) { out[k] = ""; }
+          else if (v instanceof Date) { out[k] = isNaN(v.getTime()) ? "" : v.toISOString(); }
+          else { out[k] = String(v); }
+        }
         return out;
       });
       const features = rowsToFeatures(chunk, latCol, lonCol, wktCol, skipCols);

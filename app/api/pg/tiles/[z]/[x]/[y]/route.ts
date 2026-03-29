@@ -124,6 +124,15 @@ export async function GET(
           filterClauses.push(`${col}::text NOT IN (${placeholders})`);
           break;
         }
+        case "date_between": {
+          if (!f.value?.trim()) break;
+          const [from, to] = f.value.split(",").map((v) => v.trim());
+          if (!from || !to) break;
+          queryParams.push(from); const fromIdx = queryParams.length;
+          queryParams.push(to);   const toIdx   = queryParams.length;
+          filterClauses.push(`${col} >= $${fromIdx}::timestamptz AND ${col} <= ($${toIdx}::date + interval '1 day - 1 second')::timestamptz`);
+          break;
+        }
       }
     }
 

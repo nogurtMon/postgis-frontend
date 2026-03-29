@@ -61,10 +61,11 @@ const OPERATOR_LABELS: Record<AttrOperator, string> = {
   ilike: "contains", eq: "equals", neq: "not equals",
   gt: ">", lt: "<", gte: "≥", lte: "≤",
   is_null: "is null", is_not_null: "is not null", starts_with: "starts with",
-  in: "in", not_in: "not in",
+  in: "in", not_in: "not in", date_between: "between dates",
 };
 const ALL_OPERATORS = Object.keys(OPERATOR_LABELS) as AttrOperator[];
 const NULL_OPERATORS: AttrOperator[] = ["is_null", "is_not_null"];
+const DATE_OPERATORS: AttrOperator[] = ["date_between"];
 
 const NUMERIC_TYPES_SET = new Set([
   "smallint", "integer", "bigint", "decimal", "numeric", "real", "double precision", "money",
@@ -483,7 +484,7 @@ function LayerFilterEditor({
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Filters</p>
 
       {layer.filters.map((f, i) => {
-        const isPending = !IN_OPERATORS.includes(f.operator) && !NULL_OPERATORS.includes(f.operator) && (drafts[f.id] ?? "") !== f.value;
+        const isPending = !IN_OPERATORS.includes(f.operator) && !NULL_OPERATORS.includes(f.operator) && !DATE_OPERATORS.includes(f.operator) && (drafts[f.id] ?? "") !== f.value;
         return (
           <div key={f.id} className="space-y-1 pb-1.5 border-b last:border-0">
             {/* Row 1: if/and + column + remove */}
@@ -524,6 +525,28 @@ function LayerFilterEditor({
                   value={f.value}
                   onChange={(v) => apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: v } : fi))}
                 />
+              </div>
+            ) : DATE_OPERATORS.includes(f.operator) ? (
+              <div className="pl-7 space-y-1">
+                {(() => {
+                  const [from, to] = f.value ? f.value.split(",") : ["", ""];
+                  function setDatePart(part: "from" | "to", val: string) {
+                    const next = part === "from" ? `${val},${to ?? ""}` : `${from ?? ""},${val}`;
+                    apply(layer.filters.map((fi) => fi.id === f.id ? { ...fi, value: next } : fi));
+                  }
+                  return (
+                    <>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground w-6 shrink-0">from</span>
+                        <Input type="date" value={from ?? ""} onChange={(e) => setDatePart("from", e.target.value)} className="h-6 text-[11px] flex-1" />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground w-6 shrink-0">to</span>
+                        <Input type="date" value={to ?? ""} onChange={(e) => setDatePart("to", e.target.value)} className="h-6 text-[11px] flex-1" />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             ) : !NULL_OPERATORS.includes(f.operator) && (
               <div className="pl-7 space-y-0.5">

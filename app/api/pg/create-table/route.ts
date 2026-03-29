@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   for (const col of columns ?? []) {
     if (!VALID_IDENT.test(col.name))
       return NextResponse.json({ error: `Invalid column name: "${col.name}". Use letters, numbers, and underscores only.` }, { status: 400 });
-    if (!["text", "numeric"].includes(col.type))
+    if (!["text", "numeric", "datetime"].includes(col.type))
       return NextResponse.json({ error: `Invalid column type: ${col.type}` }, { status: 400 });
   }
 
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     colParts.push(`geom GEOMETRY(${geomType}, ${sridNum})`);
 
     for (const col of columns ?? []) {
-      const typeSql = col.type === "text" ? "TEXT" : "NUMERIC";
+      const typeSql = col.type === "text" ? "TEXT" : col.type === "datetime" ? "TIMESTAMPTZ" : "NUMERIC";
       const notNull = col.notNull ? " NOT NULL" : "";
       colParts.push(`${ident(col.name)} ${typeSql}${notNull}`);
     }

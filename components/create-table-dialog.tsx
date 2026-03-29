@@ -91,8 +91,16 @@ type ArcPhase = "idle" | "loading-meta" | "pick-layer" | "ready" | "importing" |
 interface ColMapping {
   origName: string;
   pgName: string;
-  type: "text" | "numeric";
+  type: "text" | "numeric" | "datetime";
   include: boolean;
+}
+
+const DATE_NAME_RE = /date|time|week|month|year|dt|timestamp/i;
+
+function inferColType(origName: string, vals: Set<any>): "text" | "numeric" | "datetime" {
+  if (DATE_NAME_RE.test(origName)) return "datetime";
+  if (vals.size > 0 && Array.from(vals).every((v) => !isNaN(Number(v)))) return "numeric";
+  return "text";
 }
 
 interface ParsedLayer {
@@ -144,10 +152,9 @@ function inferColMappings(features: any[]): ColMapping[] {
   return Array.from(keys.entries())
     .filter(([k]) => !skip.has(k.toLowerCase()))
     .map(([origName, vals]) => {
-      const isNumeric = vals.size > 0 && Array.from(vals).every((v) => !isNaN(Number(v)));
       let pgName = sanitizeFieldName(origName);
       if (pgName === "f_id") pgName = "source_id";
-      return { origName, pgName, type: isNumeric ? "numeric" : "text", include: true };
+      return { origName, pgName, type: inferColType(origName, vals), include: true };
     });
 }
 
@@ -733,7 +740,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
         .map((h) => {
           let pgName = sanitizeFieldName(h);
           if (pgName === "f_id") pgName = "source_id";
-          return { origName: h, pgName, type: "text" as const, include: true };
+          return { origName: h, pgName, type: DATE_NAME_RE.test(h) ? "datetime" as const : "text" as const, include: true };
         }));
     } else {
       setFileColMappings(inferColMappings(layer.features));
@@ -780,7 +787,14 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
         for (const col of includedCols) {
           const val = f.properties?.[col.origName];
           if (val == null) { attrs[col.pgName] = null; continue; }
-          attrs[col.pgName] = col.type === "numeric" ? (isNaN(Number(val)) ? null : Number(val)) : String(val);
+          if (col.type === "numeric") {
+            attrs[col.pgName] = isNaN(Number(val)) ? null : Number(val);
+          } else if (col.type === "datetime") {
+            const d = new Date(String(val));
+            attrs[col.pgName] = isNaN(d.getTime()) ? null : d.toISOString();
+          } else {
+            attrs[col.pgName] = String(val);
+          }
         }
         rows.push({ geomJson: JSON.stringify(f.geometry), attrs });
       }
@@ -1199,11 +1213,12 @@ function ColMappingTable({ mappings, onChange }: { mappings: ColMapping[]; onCha
                 onChange={(e) => onChange(mappings.map((c, j) => j === i ? { ...c, pgName: e.target.value } : c))}
                 disabled={!col.include}
                 className={`h-6 text-xs font-mono px-1.5 ${!nameValid && col.include ? "border-destructive focus-visible:ring-destructive" : ""}`} />
-              <Select value={col.type} onValueChange={(v) => onChange(mappings.map((c, j) => j === i ? { ...c, type: v as "text" | "numeric" } : c))} disabled={!col.include}>
+              <Select value={col.type} onValueChange={(v) => onChange(mappings.map((c, j) => j === i ? { ...c, type: v as "text" | "numeric" | "datetime" } : c))} disabled={!col.include}>
                 <SelectTrigger className="h-6 text-xs px-1.5"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="text" className="text-xs">text</SelectItem>
                   <SelectItem value="numeric" className="text-xs">numeric</SelectItem>
+                  <SelectItem value="datetime" className="text-xs">datetime</SelectItem>
                 </SelectContent>
               </Select>
             </div>
