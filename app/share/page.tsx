@@ -2,7 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { decodeShareState } from "@/components/share-dialog";
-import { DEFAULT_STYLE } from "@/lib/types";
+import { DEFAULT_STYLE, BASEMAP_OPTIONS } from "@/lib/types";
 import type { MapLayer } from "@/lib/types";
 import Link from "next/link";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -69,6 +69,21 @@ export default function SharePage() {
       )}
       <div className="flex-1 relative">
         <MaplibreMap layers={layers} basemap={basemap} initialView={initialView} />
+        <div className="absolute top-2 right-2 z-10 flex gap-1 bg-background/80 backdrop-blur-sm border rounded-md px-1.5 py-1 shadow-sm">
+          {BASEMAP_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setBasemap(key)}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                basemap === key
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
