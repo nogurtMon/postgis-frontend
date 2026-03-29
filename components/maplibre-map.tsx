@@ -284,9 +284,9 @@ export default function MaplibreMap({
             <ScrollArea className="max-h-[50vh] mt-2">
               <div className="space-y-0">
                 {Object.entries(selection.feature.properties || {}).map(([key, value]) => (
-                  <div key={key} className="flex items-start justify-between gap-4 py-2 border-b last:border-0">
-                    <span className="text-sm font-medium capitalize shrink-0 max-w-[45%] truncate" title={key}>{key.replace(/_/g, " ")}</span>
-                    <span className="text-sm text-muted-foreground text-right break-words whitespace-pre-wrap max-w-[50%]" title={String(value)}>{String(value)}</span>
+                  <div key={key} className="py-2 border-b last:border-0">
+                    <span className="text-xs font-medium capitalize text-muted-foreground block" title={key}>{key.replace(/_/g, " ")}</span>
+                    <span className="text-sm break-words whitespace-pre-wrap" title={String(value)}>{String(value)}</span>
                   </div>
                 ))}
               </div>
