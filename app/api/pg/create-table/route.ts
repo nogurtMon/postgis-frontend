@@ -9,7 +9,10 @@ function ident(...parts: string[]) {
 
 
 const VALID_IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-const VALID_GEOM_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "Geometry"];
+const VALID_GEOM_TYPES = [
+  "Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "Geometry",
+  "PointZ", "MultiPointZ", "LineStringZ", "MultiLineStringZ", "PolygonZ", "MultiPolygonZ", "GeometryZ",
+];
 
 export async function POST(req: NextRequest) {
   const { dsn: dsnToken, schema, table, geomType, srid, columns, timestamps } = await req.json();

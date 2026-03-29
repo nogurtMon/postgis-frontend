@@ -131,13 +131,56 @@ function normalizeGeomType(raw: string): string {
   return GEOM_TYPE_MAP[raw.toLowerCase()] ?? "Geometry";
 }
 
+// Flatten one level of nesting in GeoJSON feature properties.
+// Plain-object values become parent_child keys; arrays become JSON strings.
+function flattenProperties(props: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(props ?? {})) {
+    if (v !== null && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
+      for (const [sk, sv] of Object.entries(v)) {
+        out[`${k}_${sk}`] = sv instanceof Object && !(sv instanceof Date) ? JSON.stringify(sv) : sv;
+      }
+    } else if (Array.isArray(v)) {
+      out[k] = JSON.stringify(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function flattenFeatures(features: any[]): any[] {
+  return features.map((f) => {
+    if (!f?.properties) return f;
+    const flat = flattenProperties(f.properties);
+    if (Object.keys(flat).every((k) => flat[k] === f.properties[k])) return f;
+    return { ...f, properties: flat };
+  });
+}
+
+function coordsHaveZ(c: any): boolean {
+  if (!Array.isArray(c)) return false;
+  if (typeof c[0] === "number") return c.length >= 3;
+  return c.some(coordsHaveZ);
+}
+
+function geomHasZ(geometry: any): boolean {
+  return !!(geometry?.coordinates && coordsHaveZ(geometry.coordinates));
+}
+
 function detectGeomType(features: any[]): string {
   const types = new Set<string>();
   for (const f of features) {
     const t = f?.geometry?.type;
-    if (t) { types.add(t); if (types.size > 1) return "Geometry"; }
+    if (t) { types.add(t); if (types.size > 1) break; }
   }
-  return types.size === 1 ? Array.from(types)[0] : "Geometry";
+  const base = types.size === 1 ? Array.from(types)[0] : "Geometry";
+  // For specific types, detect Z so PostGIS column matches the coordinate dimension
+  if (base !== "Geometry") {
+    const hasZ = features.slice(0, 20).some((f) => geomHasZ(f?.geometry));
+    if (hasZ) return base + "Z";
+  }
+  return base;
 }
 
 function inferColMappings(features: any[]): ColMapping[] {
@@ -432,6 +475,7 @@ async function parseGeoJSON(file: File): Promise<ParsedLayer[]> {
     if (features.length === 0) throw new Error(e.message ?? "Could not parse GeoJSON file");
   }
 
+  features = flattenFeatures(features);
   return [{ name, features, geometryType: detectGeomType(features), srid: 4326 }];
 }
 
@@ -440,7 +484,7 @@ async function parseKML(file: File): Promise<ParsedLayer[]> {
   const { kml } = await import("@tmcw/togeojson");
   const dom = new DOMParser().parseFromString(text, "text/xml");
   const fc = kml(dom);
-  const features = (fc as any).features ?? [];
+  const features = flattenFeatures((fc as any).features ?? []);
   return [{ name: file.name.replace(/\.[^.]+$/, ""), features, geometryType: detectGeomType(features), srid: 4326 }];
 }
 
@@ -793,7 +837,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
             const d = new Date(String(val));
             attrs[col.pgName] = isNaN(d.getTime()) ? null : d.toISOString();
           } else {
-            attrs[col.pgName] = String(val);
+            attrs[col.pgName] = (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val);
           }
         }
         rows.push({ geomJson: JSON.stringify(f.geometry), attrs });

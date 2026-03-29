@@ -63,7 +63,7 @@ export async function GET(
 
   try {
     const cacheKey = `${dsn}|${schema}.${table}|${geomCol}`;
-    const propCols = await getNonGeomCols(pool, schema, table, geomCol, cacheKey);
+    let propCols = await getNonGeomCols(pool, schema, table, geomCol, cacheKey);
 
     // Build parameterized WHERE clauses for filters
     const queryParams: any[] = [table, z, x, y];
@@ -166,7 +166,36 @@ export async function GET(
       WHERE tile.geom IS NOT NULL
     `;
 
-    const { rows } = await pool.query(sql, queryParams);
+    let rows: any[];
+    try {
+      ({ rows } = await pool.query(sql, queryParams));
+    } catch (qe: any) {
+      // Stale column cache — evict and retry once with fresh schema
+      if (/column .* does not exist/i.test(qe.message ?? "")) {
+        colCache.delete(cacheKey);
+        propCols = await getNonGeomCols(pool, schema, table, geomCol, cacheKey);
+        const selectCols2 = propCols.map(qi).join(", ");
+        const sql2 = `
+          SELECT ST_AsMVT(tile, $1, 4096, 'geom') AS mvt
+          FROM (
+            SELECT
+              ST_AsMVTGeom(
+                ST_Transform(${qi(geomCol)}, 3857),
+                ST_TileEnvelope($2, $3, $4),
+                4096, 64, true
+              ) AS geom
+              ${propCols.length > 0 ? `, ${selectCols2}` : ""}
+            FROM ${qi(schema)}.${qi(table)}
+            WHERE ${qi(geomCol)} && ${envelopeExpr}
+              ${whereFilter}
+          ) AS tile
+          WHERE tile.geom IS NOT NULL
+        `;
+        ({ rows } = await pool.query(sql2, queryParams));
+      } else {
+        throw qe;
+      }
+    }
     const mvt: Buffer = rows[0].mvt;
     return new NextResponse(new Uint8Array(mvt), {
       headers: {
