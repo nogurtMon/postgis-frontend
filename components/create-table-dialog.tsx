@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { findCol, rowsToFeatures, LAT_COLS, LON_COLS, WKT_COLS } from "@/lib/geo-parse-utils";
+import type { WorkerIn, WorkerOut } from "@/workers/xlsx-worker";
 
 // ─── ArcGIS helpers ───────────────────────────────────────────────────────────
 
@@ -95,9 +97,17 @@ interface ColMapping {
 
 interface ParsedLayer {
   name: string;
-  features: any[];      // GeoJSON Feature objects
+  features: any[];      // GeoJSON Feature objects (may be a sample for large CSV/XLSX)
   geometryType: string; // PostGIS geometry type string
   srid: number;
+  // Streaming fields — set for CSV/XLSX so we don't hold 183k objects in memory
+  rawFile?: File;
+  latCol?: string | null;
+  lonCol?: string | null;
+  wktCol?: string | null;
+  skipCols?: Set<string>;
+  totalRows?: number;
+  _attrHeaders?: string[]; // XLSX: header names for col mapping when features[] is empty
 }
 
 type FilePhase = "idle" | "parsing" | "ready" | "importing" | "done" | "error";
@@ -143,133 +153,63 @@ function inferColMappings(features: any[]): ColMapping[] {
 
 // ─── CSV / XLSX helpers ───────────────────────────────────────────────────────
 
-const LAT_COLS = new Set(["latitude", "lat", "y", "northing"]);
-const LON_COLS = new Set(["longitude", "lon", "lng", "long", "x", "easting"]);
-const WKT_COLS = new Set(["wkt_geometry", "wkt", "geometry", "geom", "the_geom", "shape"]);
-
-function findCol(headers: string[], candidates: Set<string>): string | null {
-  for (const h of headers) {
-    if (candidates.has(h.toLowerCase().trim())) return h;
+// Parse a single CSV line, handling quoted fields
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') { inQ = false; }
+      else { cur += ch; }
+    } else {
+      if (ch === '"') { inQ = true; }
+      else if (ch === ",") { fields.push(cur); cur = ""; }
+      else { cur += ch; }
+    }
   }
-  return null;
+  fields.push(cur);
+  return fields;
 }
 
-// Minimal WKT → GeoJSON geometry (handles Point, LineString, Polygon, Multi*)
-function wktToGeoJSON(wkt: string): object | null {
-  const s = wkt.trim();
-  const m = s.match(/^(\w+)\s*(?:Z\s*)?\(([\s\S]+)\)$/i);
-  if (!m) return null;
-  const type = m[1].toUpperCase();
-  const body = m[2];
-
-  function parseCoord(pair: string): number[] {
-    const parts = pair.trim().split(/\s+/);
-    return [parseFloat(parts[0]), parseFloat(parts[1])];
-  }
-  function parseRing(ringStr: string): number[][] {
-    return ringStr.trim().split(/,/).map(parseCoord);
-  }
-
-  if (type === "POINT") {
-    const coords = parseCoord(body);
-    if (coords.some(isNaN)) return null;
-    return { type: "Point", coordinates: coords };
-  }
-  if (type === "LINESTRING") {
-    return { type: "LineString", coordinates: parseRing(body) };
-  }
-  if (type === "POLYGON") {
-    const rings = body.split(/\)\s*,\s*\(/).map((r) => parseRing(r.replace(/^\s*\(|\)\s*$/g, "")));
-    return { type: "Polygon", coordinates: rings };
-  }
-  if (type === "MULTIPOINT") {
-    const pts = body.split(/\)\s*,\s*\(/).map((p) => parseCoord(p.replace(/^\s*\(|\)\s*$/g, "").trim()));
-    return { type: "MultiPoint", coordinates: pts };
-  }
-  if (type === "MULTILINESTRING") {
-    const lines = body.split(/\)\s*,\s*\(/).map((l) => parseRing(l.replace(/^\s*\(|\)\s*$/g, "")));
-    return { type: "MultiLineString", coordinates: lines };
-  }
-  if (type === "MULTIPOLYGON") {
-    const polys = body.split(/\)\s*\)\s*,\s*\(\s*\(/).map((poly) => {
-      const clean = poly.replace(/^\s*\(|\)\s*$/g, "");
-      return clean.split(/\)\s*,\s*\(/).map((r) => parseRing(r.replace(/^\s*\(|\)\s*$/g, "")));
-    });
-    return { type: "MultiPolygon", coordinates: polys };
-  }
-  return null;
-}
-
-function rowsToFeatures(
-  rows: Record<string, string>[],
-  latCol: string | null,
-  lonCol: string | null,
-  wktCol: string | null,
-  skipCols: Set<string>,
-): { features: any[]; skipped: number } {
-  let skipped = 0;
-  const features: any[] = [];
-  for (const row of rows) {
-    let geometry: object | null = null;
-    if (wktCol) {
-      const wkt = row[wktCol]?.trim();
-      if (wkt) geometry = wktToGeoJSON(wkt);
-    } else if (latCol && lonCol) {
-      const lat = parseFloat(row[latCol]);
-      const lon = parseFloat(row[lonCol]);
-      if (!isNaN(lat) && !isNaN(lon)) geometry = { type: "Point", coordinates: [lon, lat] };
+// Read lines from a File using its ReadableStream — yields to browser on every chunk
+async function* csvLineStream(file: File): AsyncGenerator<string> {
+  const reader = file.stream().pipeThrough(new TextDecoderStream()).getReader();
+  let leftover = "";
+  while (true) {
+    const { done, value } = await reader.read(); // yields to event loop here
+    if (done) {
+      if (leftover) yield leftover;
+      break;
     }
-    if (!geometry) { skipped++; continue; }
-    const props: Record<string, any> = {};
-    for (const [k, v] of Object.entries(row)) {
-      if (!skipCols.has(k)) props[k] = v === "" ? null : v;
-    }
-    features.push({ type: "Feature", geometry, properties: props });
+    const chunk = leftover + value;
+    const lines = chunk.split(/\r?\n/);
+    leftover = lines.pop() ?? "";
+    for (const line of lines) yield line;
   }
-  return { features, skipped };
-}
-
-function parseCSVText(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/);
-  if (!lines.length) return [];
-  // Simple CSV parser — handles quoted fields
-  function parseLine(line: string): string[] {
-    const fields: string[] = [];
-    let cur = "";
-    let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQ) {
-        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-        else if (ch === '"') { inQ = false; }
-        else { cur += ch; }
-      } else {
-        if (ch === '"') { inQ = true; }
-        else if (ch === ",") { fields.push(cur); cur = ""; }
-        else { cur += ch; }
-      }
-    }
-    fields.push(cur);
-    return fields;
-  }
-  const headers = parseLine(lines[0]);
-  const rows: Record<string, string>[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const vals = parseLine(line);
-    const row: Record<string, string> = {};
-    headers.forEach((h, idx) => { row[h] = vals[idx] ?? ""; });
-    rows.push(row);
-  }
-  return rows;
 }
 
 async function parseCSV(file: File): Promise<ParsedLayer[]> {
-  const text = await file.text();
-  const rows = parseCSVText(text);
-  if (!rows.length) throw new Error("CSV file is empty or has no data rows");
-  const headers = Object.keys(rows[0]);
+  // Read only the header line + a few sample rows — never load the full file
+  const SAMPLE_ROWS = 20;
+  let headers: string[] | null = null;
+  const sampleRows: Record<string, string>[] = [];
+
+  for await (const line of csvLineStream(file)) {
+    if (!line.trim()) continue;
+    if (!headers) { headers = parseCSVLine(line); continue; }
+    if (sampleRows.length >= SAMPLE_ROWS) break;
+    const vals = parseCSVLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((h, idx) => { row[h] = vals[idx] ?? ""; });
+    sampleRows.push(row);
+  }
+
+  if (!headers?.length) throw new Error("CSV file is empty");
+  if (!sampleRows.length) throw new Error("CSV file has no data rows");
+
   const latCol = findCol(headers, LAT_COLS);
   const lonCol = findCol(headers, LON_COLS);
   const wktCol = findCol(headers, WKT_COLS);
@@ -277,45 +217,80 @@ async function parseCSV(file: File): Promise<ParsedLayer[]> {
     throw new Error(
       "Could not find coordinate columns. Expected latitude/longitude columns (lat, latitude, y / lon, longitude, x) or a WKT column (wkt_geometry, wkt, geom)."
     );
+
   const skipCols = new Set<string>([
     ...(latCol ? [latCol] : []),
     ...(lonCol ? [lonCol] : []),
     ...(wktCol ? [wktCol] : []),
   ]);
-  const { features } = rowsToFeatures(rows, latCol, lonCol, wktCol, skipCols);
-  if (!features.length) throw new Error("No valid geometries found in CSV");
+
+  const sampleFeatures = rowsToFeatures(sampleRows, latCol, lonCol, wktCol, skipCols);
+
   const name = file.name.replace(/\.[^.]+$/, "");
-  return [{ name, features, geometryType: wktCol ? detectGeomType(features) : "Point", srid: 4326 }];
+  return [{
+    name,
+    features: sampleFeatures,
+    geometryType: wktCol ? (sampleFeatures.length > 0 ? detectGeomType(sampleFeatures) : "Geometry") : "Point",
+    srid: 4326,
+    rawFile: file,
+    latCol,
+    lonCol,
+    wktCol,
+    skipCols,
+    totalRows: undefined, // will be determined during import
+  }];
+}
+
+// Send a message to an XLSX worker and get the response via Promise
+function xlsxWorkerPreview(buffer: ArrayBuffer): Promise<Extract<WorkerOut, { type: "preview" }>> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("../workers/xlsx-worker.ts", import.meta.url));
+    worker.onmessage = (e: MessageEvent<WorkerOut>) => {
+      worker.terminate();
+      if (e.data.type === "error") reject(new Error(e.data.message));
+      else if (e.data.type === "preview") resolve(e.data);
+    };
+    worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
+    worker.postMessage({ type: "preview", buffer } satisfies WorkerIn, [buffer]);
+  });
 }
 
 async function parseXLSX(file: File): Promise<ParsedLayer[]> {
-  const mod = await import("xlsx");
-  const XLSX = mod.default ?? mod;
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array" });
+  // Read file once; transfer to worker (zero-copy)
+  const buffer = await file.arrayBuffer();
+  // Clone for worker (it will be transferred/consumed); keep original for import
+  const workerBuf = buffer.slice(0);
+  const result = await xlsxWorkerPreview(workerBuf);
+
   const layers: ParsedLayer[] = [];
-  for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-    if (!rows.length) continue;
-    const headers = Object.keys(rows[0]);
-    const latCol = findCol(headers, LAT_COLS);
-    const lonCol = findCol(headers, LON_COLS);
-    const wktCol = findCol(headers, WKT_COLS);
-    if (!wktCol && (!latCol || !lonCol)) continue; // skip sheets without geo cols
+  for (const sheet of result.sheets) {
+    const { name, headers, latCol, lonCol, wktCol, totalRows } = sheet;
+    if (!wktCol && (!latCol || !lonCol)) continue;
     const skipCols = new Set<string>([
       ...(latCol ? [latCol] : []),
       ...(lonCol ? [lonCol] : []),
       ...(wktCol ? [wktCol] : []),
     ]);
-    const stringRows = rows.map((r) => {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(r)) out[k] = v == null ? "" : String(v);
-      return out;
-    });
-    const { features } = rowsToFeatures(stringRows, latCol, lonCol, wktCol, skipCols);
-    if (!features.length) continue;
-    layers.push({ name: sheetName, features, geometryType: wktCol ? detectGeomType(features) : "Point", srid: 4326 });
+    // sampleFeatures is empty — worker only reads header + 1 row for speed
+    // We just need headers for the column mapping UI
+    const sampleRow: Record<string, string> = {};
+    headers.forEach((h) => { sampleRow[h] = ""; });
+    const attrHeaders = headers.filter((h) => !skipCols.has(h));
+
+    layers.push({
+      name,
+      features: [], // no sample features needed — just need geometryType + col mappings
+      geometryType: wktCol ? "Geometry" : "Point",
+      srid: 4326,
+      rawFile: file,
+      latCol,
+      lonCol,
+      wktCol,
+      skipCols,
+      totalRows,
+      // stash attr headers so inferColMappings has something to work with
+      _attrHeaders: attrHeaders,
+    } as any);
   }
   if (!layers.length)
     throw new Error(
@@ -750,7 +725,19 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
   function selectFileLayer(layers: ParsedLayer[], idx: number) {
     const layer = layers[idx];
     setFileSelectedIdx(idx);
-    setFileColMappings(inferColMappings(layer.features));
+    if (layer._attrHeaders?.length) {
+      // XLSX preview: features[] is empty, use header names directly (all text)
+      const skip = new Set(["id", "geom", "fid"]);
+      setFileColMappings(layer._attrHeaders
+        .filter((h) => !skip.has(h.toLowerCase()))
+        .map((h) => {
+          let pgName = sanitizeFieldName(h);
+          if (pgName === "f_id") pgName = "source_id";
+          return { origName: h, pgName, type: "text" as const, include: true };
+        }));
+    } else {
+      setFileColMappings(inferColMappings(layer.features));
+    }
     setFileTable(suggestTableName(layer.name));
   }
 
@@ -774,7 +761,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const layer = fileLayers[fileSelectedIdx] ?? fileLayers[0];
     if (!layer) return;
     setFilePhase("importing");
-    setFileProgress({ done: 0, total: layer.features.length });
+    setFileProgress({ done: 0, total: layer.totalRows ?? layer.features.length });
 
     const includedCols = fileColMappings.filter((c) => c.include);
     const createRes = await fetch("/api/pg/create-table", {
@@ -784,66 +771,136 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
     const createData = await createRes.json();
     if (!createRes.ok) { setFileError(createData.error ?? "Failed to create table"); setFilePhase("error"); return; }
 
-    // Build rows adaptively so each HTTP batch stays under ~800 KB
-    const MAX_PAYLOAD_BYTES = 800_000;
-    let i = 0;
-    while (i < layer.features.length) {
+    // Helper: send one batch to the DB
+    async function sendBatch(features: any[]): Promise<string | null> {
       const rows: { geomJson: string; attrs: Record<string, any> }[] = [];
-      let payloadBytes = 100;
-      let j = i;
-      while (j < layer.features.length && rows.length < 500) {
-        const f = layer.features[j];
-        j++;
+      for (const f of features) {
         if (!f.geometry) continue;
         const attrs: Record<string, any> = {};
         for (const col of includedCols) {
           const val = f.properties?.[col.origName];
           if (val == null) { attrs[col.pgName] = null; continue; }
-          if (col.type === "numeric") {
-            const n = Number(val);
-            attrs[col.pgName] = isNaN(n) ? null : n;
-          } else {
-            attrs[col.pgName] = String(val);
+          attrs[col.pgName] = col.type === "numeric" ? (isNaN(Number(val)) ? null : Number(val)) : String(val);
+        }
+        rows.push({ geomJson: JSON.stringify(f.geometry), attrs });
+      }
+      if (!rows.length) return null;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60_000);
+      try {
+        const res = await fetch("/api/pg/bulk-insert", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dsn, schema: fileSchema, table: fileTable, rows, srid: layer.srid }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          const t = await res.text();
+          let msg = "Insert failed";
+          try { msg = JSON.parse(t).error ?? msg; } catch {}
+          return msg;
+        }
+        return null;
+      } catch (err: any) {
+        clearTimeout(timer);
+        return err.name === "AbortError" ? "Batch timed out after 60 s" : (err.message ?? "Network error");
+      }
+    }
+
+    if (layer.rawFile) {
+      // ── Streaming path: CSV / XLSX (large files — never hold all rows in memory) ──
+      const { rawFile, latCol = null, lonCol = null, wktCol = null, skipCols = new Set() } = layer;
+      const CHUNK = 500;
+
+      if (rawFile.name.toLowerCase().endsWith(".csv")) {
+        // True streaming: file.stream() yields to browser on every OS read — never loads full file
+        let headers: string[] | null = null;
+        let done = 0;
+        let rowBuf: Record<string, string>[] = [];
+
+        const flush = async () => {
+          if (!rowBuf.length) return null;
+          const features = rowsToFeatures(rowBuf, latCol, lonCol, wktCol, skipCols);
+          const err = await sendBatch(features);
+          done += rowBuf.length;
+          rowBuf = [];
+          setFileProgress({ done, total: done }); // total unknown until end
+          return err;
+        };
+
+        for await (const line of csvLineStream(rawFile)) {
+          if (!line.trim()) continue;
+          if (!headers) { headers = parseCSVLine(line); continue; }
+          const vals = parseCSVLine(line);
+          const row: Record<string, string> = {};
+          headers!.forEach((h, idx) => { row[h] = vals[idx] ?? ""; });
+          rowBuf.push(row);
+          if (rowBuf.length >= CHUNK) {
+            const err = await flush();
+            if (err) { setFileError(err); setFilePhase("error"); return; }
           }
         }
-        const geomJson = JSON.stringify(f.geometry);
-        const rowBytes = geomJson.length + JSON.stringify(attrs).length + 20;
-        if (rows.length > 0 && payloadBytes + rowBytes > MAX_PAYLOAD_BYTES) {
-          j--; // put this feature back for the next batch
-          break;
-        }
-        rows.push({ geomJson, attrs });
-        payloadBytes += rowBytes;
+        const err = await flush();
+        if (err) { setFileError(err); setFilePhase("error"); return; }
+      } else {
+        // XLSX: offload all parsing to a Web Worker — main thread stays responsive.
+        // Uses ack pattern: main thread sends "next" after each DB insert so the
+        // worker never gets ahead of the progress bar.
+        const buffer = await rawFile.arrayBuffer();
+        let importError: string | null = null;
+        await new Promise<void>((resolve, reject) => {
+          const worker = new Worker(new URL("../workers/xlsx-worker.ts", import.meta.url));
+          worker.onmessage = (e: MessageEvent<WorkerOut>) => {
+            const msg = e.data;
+            if (msg.type === "error") { worker.terminate(); reject(new Error(msg.message)); return; }
+            if (msg.type === "done") { worker.terminate(); resolve(); return; }
+            if (msg.type === "chunk") {
+              // Process synchronously in the ack callback to maintain back-pressure
+              sendBatch(msg.features).then((err) => {
+                if (err) { worker.terminate(); reject(new Error(err)); return; }
+                setFileProgress({ done: msg.done, total: msg.total });
+                // Ack: tell worker to send the next chunk
+                worker.postMessage({ type: "next" } satisfies WorkerIn);
+              });
+            }
+          };
+          worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
+          worker.postMessage({
+            type: "import",
+            buffer,
+            sheetName: layer.name,
+            latCol: latCol ?? null,
+            lonCol: lonCol ?? null,
+            wktCol: wktCol ?? null,
+            skipCols: [...skipCols],
+          } satisfies WorkerIn, [buffer]);
+        }).catch((err: Error) => { importError = err.message; });
+        if (importError) { setFileError(importError); setFilePhase("error"); return; }
       }
-
-      if (rows.length > 0) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 60_000);
-        let insertRes: Response;
-        try {
-          insertRes = await fetch("/api/pg/bulk-insert", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dsn, schema: fileSchema, table: fileTable, rows, srid: layer.srid }),
-            signal: ctrl.signal,
-          });
-        } catch (err: any) {
-          clearTimeout(timer);
-          setFileError(err.name === "AbortError" ? "Batch timed out after 60 s" : err.message ?? "Network error");
-          setFilePhase("error"); return;
+    } else {
+      // ── Standard path: GeoJSON / KML / GPKG / SHP (all features already in memory) ──
+      const MAX_PAYLOAD_BYTES = 800_000;
+      let i = 0;
+      while (i < layer.features.length) {
+        let j = i;
+        let payloadBytes = 100;
+        const batch: any[] = [];
+        while (j < layer.features.length && batch.length < 500) {
+          const f = layer.features[j++];
+          if (!f.geometry) continue;
+          const geomBytes = JSON.stringify(f.geometry).length + 20;
+          if (batch.length > 0 && payloadBytes + geomBytes > MAX_PAYLOAD_BYTES) { j--; break; }
+          batch.push(f);
+          payloadBytes += geomBytes;
         }
-        clearTimeout(timer);
-        if (!insertRes.ok) {
-          const text = await insertRes.text();
-          let msg = "Insert failed";
-          try { msg = JSON.parse(text).error ?? msg; } catch {}
-          setFileError(msg); setFilePhase("error"); return;
-        }
+        const err = await sendBatch(batch);
+        if (err) { setFileError(err); setFilePhase("error"); return; }
+        i = j;
+        setFileProgress({ done: i, total: layer.features.length });
+        await new Promise((r) => setTimeout(r, 0));
       }
-
-      i = j;
-      setFileProgress({ done: i, total: layer.features.length });
-      await new Promise((r) => setTimeout(r, 0));
     }
+
     setFilePhase("done");
     onCreated();
   }
@@ -1051,7 +1108,7 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
                   <div className="flex justify-between"><span className="text-muted-foreground">Layer</span><span className="font-medium truncate max-w-52" title={fileLayers[fileSelectedIdx].name}>{fileLayers[fileSelectedIdx].name}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Geometry</span><span>{fileLayers[fileSelectedIdx].geometryType}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">SRID</span><span>{fileLayers[fileSelectedIdx].srid}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Features</span><span>{fileLayers[fileSelectedIdx].features.length.toLocaleString()}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Features</span><span>{(fileLayers[fileSelectedIdx].totalRows ?? fileLayers[fileSelectedIdx].features.length).toLocaleString()}</span></div>
                 </div>
               )}
 
@@ -1080,7 +1137,9 @@ export function CreateTableDialog({ open, onOpenChange, dsn, onCreated, defaultS
 
               {filePhase === "importing" && (
                 <ProgressBar pct={filePct} label="Importing…"
-                  detail={`${fileProgress.done.toLocaleString()} / ${fileProgress.total.toLocaleString()} features`} />
+                  detail={fileProgress.total > fileProgress.done
+                    ? `${fileProgress.done.toLocaleString()} / ${fileProgress.total.toLocaleString()} rows`
+                    : `${fileProgress.done.toLocaleString()} rows`} />
               )}
 
               {filePhase === "done" && <p className="text-sm text-green-600 dark:text-green-400">Import complete — {fileProgress.done.toLocaleString()} features added to <span className="font-mono">{fileSchema}.{fileTable}</span>.</p>}
