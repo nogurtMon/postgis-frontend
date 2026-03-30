@@ -71,7 +71,7 @@ const BLANK_STYLE = {
 
 
 // ─── types ────────────────────────────────────────────────────────────────────
-interface Selection { feature: any; layer: MapLayer; }
+interface SelectionItem { feature: any; layer: MapLayer; }
 export type ZoomTarget = { bounds: [[number, number], [number, number]] };
 
 // ─── props ────────────────────────────────────────────────────────────────────
@@ -100,7 +100,8 @@ export default function MaplibreMap({
   const basemap = basemapProp ?? "";
 
   // ── selection / properties dialog
-  const [selection, setSelection] = React.useState<Selection | null>(null);
+  const [selectionItems, setSelectionItems] = React.useState<SelectionItem[]>([]);
+  const [selectionIdx, setSelectionIdx] = React.useState(0);
   const [isPropsOpen, setIsPropsOpen] = React.useState(false);
   const [zoom, setZoom] = React.useState(4);
 
@@ -203,10 +204,18 @@ export default function MaplibreMap({
           },
           onClick: (info: any) => {
             if (!info.object) return;
-            const mapLayerId = (info.layer?.id ?? "").replace(/^layer-/, "");
-            const mapLayer = layers.find((l) => l.id === mapLayerId) ?? null;
-            if (!mapLayer) return;
-            setSelection({ feature: info.object, layer: mapLayer });
+            const picks: any[] = (overlay as any).pickMultipleObjects?.({ x: info.x, y: info.y, radius: 1, depth: 50 }) ?? [info];
+            const items: SelectionItem[] = (picks.length > 0 ? picks : [info])
+              .filter((p: any) => p.object)
+              .map((p: any) => {
+                const mlId = (p.layer?.id ?? "").replace(/^layer-/, "");
+                const ml = layers.find((l) => l.id === mlId) ?? null;
+                return ml ? { feature: p.object, layer: ml } : null;
+              })
+              .filter(Boolean) as SelectionItem[];
+            if (items.length === 0) return;
+            setSelectionItems(items);
+            setSelectionIdx(0);
             setIsPropsOpen(true);
           },
         });
@@ -273,17 +282,36 @@ export default function MaplibreMap({
       <Dialog open={isPropsOpen} onOpenChange={setIsPropsOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Feature Properties</DialogTitle>
+            <DialogTitle className="flex items-center justify-between gap-2">
+              <span>Feature Properties</span>
+              {selectionItems.length > 1 && (
+                <span className="flex items-center gap-1 text-sm font-normal text-muted-foreground">
+                  <button
+                    onClick={() => setSelectionIdx((i) => Math.max(0, i - 1))}
+                    disabled={selectionIdx === 0}
+                    className="px-1.5 py-0.5 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                    aria-label="Previous feature"
+                  >‹</button>
+                  <span className="tabular-nums">{selectionIdx + 1} / {selectionItems.length}</span>
+                  <button
+                    onClick={() => setSelectionIdx((i) => Math.min(selectionItems.length - 1, i + 1))}
+                    disabled={selectionIdx === selectionItems.length - 1}
+                    className="px-1.5 py-0.5 rounded hover:bg-muted disabled:opacity-30 transition-colors"
+                    aria-label="Next feature"
+                  >›</button>
+                </span>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              {selection
-                ? `${selection.layer.table.table_schema}.${selection.layer.table.table_name}`
+              {selectionItems[selectionIdx]
+                ? `${selectionItems[selectionIdx].layer.table.table_schema}.${selectionItems[selectionIdx].layer.table.table_name}`
                 : "Attributes for the selected feature"}
             </DialogDescription>
           </DialogHeader>
-          {selection && (
+          {selectionItems[selectionIdx] && (
             <ScrollArea className="max-h-[50vh] mt-2">
               <div className="space-y-0">
-                {Object.entries(selection.feature.properties || {}).map(([key, value]) => (
+                {Object.entries(selectionItems[selectionIdx].feature.properties || {}).map(([key, value]) => (
                   <div key={key} className="py-2 border-b last:border-0">
                     <span className="text-xs font-medium capitalize text-muted-foreground block" title={key}>{key.replace(/_/g, " ")}</span>
                     <span className="text-sm break-words whitespace-pre-wrap" title={String(value)}>{String(value)}</span>
